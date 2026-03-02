@@ -31,6 +31,9 @@ _MAX_PAGES = 100
 # when num_retries > 0, with exponential back-off.
 _MAX_API_RETRIES = 5
 
+# Only process a meeting when we are within this window of its start time.
+_CANCELLATION_WINDOW = datetime.timedelta(hours=1)
+
 
 def _safe_summary(event: dict) -> str:
     """Return a sanitised event summary safe to write to logs."""
@@ -111,6 +114,22 @@ def get_todays_recurring_events(calendar_svc, today: datetime.date, tz: str) -> 
 
     logger.info("Found %d recurring event(s) for %s.", len(events), today)
     return events
+
+
+def is_within_cancellation_window(event: dict, now: datetime.datetime) -> bool:
+    """Return True if *now* is within 1 hour of the event's start time.
+
+    All-day events (no ``dateTime`` field) are silently ignored (returns False).
+    Malformed ``dateTime`` strings also return False without raising.
+    """
+    start_str = event.get('start', {}).get('dateTime', '')
+    if not start_str:
+        return False
+    try:
+        event_start = datetime.datetime.fromisoformat(start_str)
+    except ValueError:
+        return False
+    return now >= event_start - _CANCELLATION_WINDOW
 
 
 def cancel_event_occurrence(calendar_svc, event: dict, note: str) -> None:

@@ -372,102 +372,46 @@ class TestGetCredentials(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# UT-14 .. UT-16  run-once-per-day guard (main._read_last_success /
-#                 _write_last_success / early-exit in main())
+# UT-14 .. UT-18  is_within_cancellation_window
 # ---------------------------------------------------------------------------
 
-class TestRunOncePerDay(unittest.TestCase):
+class TestCancellationWindow(unittest.TestCase):
+    """Tests for calendar_service.is_within_cancellation_window()."""
 
-    def test_ut14_already_ran_today_exits_early(self):
-        """UT-14: last_success.txt contains today → main() exits before fetching events."""
-        today = datetime.date(2026, 2, 27)
+    _TZ = datetime.timezone.utc
 
-        # Fake creds / services so auth doesn't touch the filesystem.
-        mock_creds = MagicMock()
-        mock_cal_svc = MagicMock()
-        mock_docs_svc = MagicMock()
-        mock_cal_svc.settings.return_value.get.return_value.execute.return_value = {
-            'value': 'UTC'
-        }
+    def _event(self, start_iso: str) -> dict:
+        return {'start': {'dateTime': start_iso}}
 
-        with (
-            patch('main._read_last_success', return_value=today),
-            patch('main._write_last_success') as mock_write,
-            patch('auth.get_credentials', return_value=mock_creds),
-            patch('auth.build_services', return_value=(mock_cal_svc, mock_docs_svc, MagicMock())),
-            patch('calendar_service.get_todays_recurring_events') as mock_fetch,
-            patch('sys.argv', ['main.py']),
-        ):
-            with self.assertLogs('main', level='INFO') as log_ctx:
-                main.main()
+    def test_ut14_meeting_more_than_one_hour_away_returns_false(self):
+        """UT-14: now=09:00, meeting=10:31 → more than 1 h away → False."""
+        now = datetime.datetime(2026, 2, 26, 9, 0, 0, tzinfo=self._TZ)
+        event = self._event('2026-02-26T10:31:00+00:00')
+        self.assertFalse(calendar_service.is_within_cancellation_window(event, now))
 
-        # Events must NOT have been fetched.
-        mock_fetch.assert_not_called()
-        # Success file must NOT be overwritten.
-        mock_write.assert_not_called()
-        self.assertTrue(
-            any('already ran successfully today' in msg for msg in log_ctx.output),
-            "Expected early-exit log message",
-        )
+    def test_ut15_meeting_exactly_at_one_hour_boundary_returns_true(self):
+        """UT-15: now=09:30, meeting=10:30 → exactly 1 h away → True."""
+        now = datetime.datetime(2026, 2, 26, 9, 30, 0, tzinfo=self._TZ)
+        event = self._event('2026-02-26T10:30:00+00:00')
+        self.assertTrue(calendar_service.is_within_cancellation_window(event, now))
 
-    def test_ut15_successful_run_writes_last_success(self):
-        """UT-15: After a successful run, last_success.txt is written with today's date."""
-        mock_creds = MagicMock()
-        mock_cal_svc = MagicMock()
-        mock_docs_svc = MagicMock()
-        mock_cal_svc.settings.return_value.get.return_value.execute.return_value = {
-            'value': 'UTC'
-        }
-        # No recurring events today → nothing to cancel.
-        mock_cal_svc.events.return_value.list.return_value.execute.return_value = {
-            'items': []
-        }
+    def test_ut16_meeting_already_started_returns_true(self):
+        """UT-16: now > event_start → True."""
+        now = datetime.datetime(2026, 2, 26, 11, 0, 0, tzinfo=self._TZ)
+        event = self._event('2026-02-26T10:30:00+00:00')
+        self.assertTrue(calendar_service.is_within_cancellation_window(event, now))
 
-        with (
-            patch('main._read_last_success', return_value=None),
-            patch('main._write_last_success') as mock_write,
-            patch('auth.get_credentials', return_value=mock_creds),
-            patch('auth.build_services', return_value=(mock_cal_svc, mock_docs_svc, MagicMock())),
-            patch('sys.argv', ['main.py']),
-        ):
-            main.main()
+    def test_ut17_missing_datetime_field_returns_false(self):
+        """UT-17: No dateTime in start → False, no crash."""
+        now = datetime.datetime(2026, 2, 26, 9, 0, 0, tzinfo=self._TZ)
+        event = {'start': {'date': '2026-02-26'}}  # all-day event style
+        self.assertFalse(calendar_service.is_within_cancellation_window(event, now))
 
-        # _write_last_success must have been called with today's date.
-        mock_write.assert_called_once()
-        written_date = mock_write.call_args[0][0]
-        self.assertIsInstance(written_date, datetime.date)
-
-    def test_ut16_past_date_in_file_does_not_exit_early(self):
-        """UT-16: last_success.txt contains yesterday → program proceeds normally."""
-        yesterday = datetime.date(2026, 2, 26)
-
-        mock_creds = MagicMock()
-        mock_cal_svc = MagicMock()
-        mock_docs_svc = MagicMock()
-        mock_cal_svc.settings.return_value.get.return_value.execute.return_value = {
-            'value': 'UTC'
-        }
-        mock_cal_svc.events.return_value.list.return_value.execute.return_value = {
-            'items': []
-        }
-
-        with (
-            patch('main._read_last_success', return_value=yesterday),
-            patch('main._write_last_success') as mock_write,
-            patch('auth.get_credentials', return_value=mock_creds),
-            patch('auth.build_services', return_value=(mock_cal_svc, mock_docs_svc, MagicMock())),
-            patch('calendar_service.get_todays_recurring_events') as mock_fetch,
-            patch('sys.argv', ['main.py']),
-        ):
-            mock_fetch.return_value = []
-            main.main()
-
-        # Events MUST have been fetched (program did not exit early).
-        mock_fetch.assert_called_once()
-        # Success file MUST be written with today's (not yesterday's) date.
-        mock_write.assert_called_once()
-        written_date = mock_write.call_args[0][0]
-        self.assertNotEqual(written_date, yesterday)
+    def test_ut18_malformed_datetime_string_returns_false(self):
+        """UT-18: Garbled dateTime → False, no crash."""
+        now = datetime.datetime(2026, 2, 26, 9, 0, 0, tzinfo=self._TZ)
+        event = self._event('not-a-date')
+        self.assertFalse(calendar_service.is_within_cancellation_window(event, now))
 
 
 # ---------------------------------------------------------------------------

@@ -41,9 +41,6 @@ LOG_FILE = 'optimizer.log'
 _LOG_MAX_BYTES = 10 * 1024 * 1024
 _LOG_BACKUP_COUNT = 5
 
-LAST_SUCCESS_PATH = 'last_success.txt'
-
-
 def configure_logging() -> None:
     fmt = '%(asctime)s %(levelname)-8s %(name)s: %(message)s'
     handlers: list[logging.Handler] = [logging.StreamHandler(sys.stdout)]
@@ -87,27 +84,6 @@ def _safe_summary(event: dict) -> str:
     return repr(raw[:80])
 
 
-def _read_last_success() -> datetime.date | None:
-    """Return the date stored in LAST_SUCCESS_PATH, or None if absent/unreadable."""
-    try:
-        with open(LAST_SUCCESS_PATH) as f:
-            return datetime.date.fromisoformat(f.read().strip())
-    except (OSError, ValueError):
-        return None
-
-
-def _write_last_success(today: datetime.date) -> None:
-    """Write today's ISO date to LAST_SUCCESS_PATH, restricted to owner r/w."""
-    try:
-        with open(LAST_SUCCESS_PATH, 'w') as f:
-            f.write(today.isoformat())
-        os.chmod(LAST_SUCCESS_PATH, stat.S_IRUSR | stat.S_IWUSR)
-    except OSError as exc:
-        logging.getLogger(__name__).warning(
-            "Could not write '%s': %s", LAST_SUCCESS_PATH, exc
-        )
-
-
 def main() -> None:
     configure_logging()
     logger = logging.getLogger(__name__)
@@ -135,18 +111,14 @@ def main() -> None:
         logger.info("User timezone: %s", tz_string)
 
         try:
-            today = datetime.datetime.now(ZoneInfo(tz_string)).date()
+            now   = datetime.datetime.now(ZoneInfo(tz_string))
+            today = now.date()
         except ZoneInfoNotFoundError:
             logger.warning(
                 "Unknown timezone '%s' from Calendar API; falling back to UTC.", tz_string
             )
-            today = datetime.datetime.now(ZoneInfo('UTC')).date()
-
-        if not args.dry_run and _read_last_success() == today:
-            logger.info(
-                "Optimizer already ran successfully today (%s) — exiting.", today
-            )
-            return
+            now   = datetime.datetime.now(ZoneInfo('UTC'))
+            today = now.date()
 
         logger.info("Checking meetings for: %s", today)
 
@@ -157,6 +129,13 @@ def main() -> None:
         else:
             for event in events:
                 try:
+                    if not calendar_service.is_within_cancellation_window(event, now):
+                        start_str = event.get('start', {}).get('dateTime', '')
+                        logger.info(
+                            "Skipping %s (starts at %s — more than 1 hour away).",
+                            _safe_summary(event), start_str,
+                        )
+                        continue
                     canceller.process_event(
                         event, calendar_svc, docs_svc, today, dry_run=args.dry_run
                     )
@@ -174,8 +153,6 @@ def main() -> None:
         sys.exit(1)
 
     logger.info("recurring-meeting-optimizer finished.")
-    if not args.dry_run and today is not None:
-        _write_last_success(today)
 
 
 if __name__ == '__main__':
