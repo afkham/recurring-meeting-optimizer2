@@ -23,14 +23,15 @@ Recurring Meeting Optimizer automatically cancels recurring Google Calendar meet
 
 ## 1. How It Works
 
-Every time the program runs it:
+The program is designed to run **every hour** via cron. Each time it runs it:
 
 1. Fetches all **recurring** Google Calendar events scheduled for **today** from your primary calendar.
-2. For each recurring event, looks for an attached Google Doc (added via Google Drive attachment on the event).
-3. Reads that doc and searches for a heading that starts with **today's date** (e.g. `Feb 26, 2026 | Team Sync`).
-4. Under that date heading, looks for a **Topic** or **Topics** section.
-5. **If topics are present** → the meeting is required → it is left untouched.
-6. **If no date heading, or topics are empty** → the meeting is not required → the occurrence is cancelled and all attendees receive a cancellation email with the note: *"Meeting canceled since there are no topics to be discussed today"*.
+2. **Skips any event that starts more than 1 hour from now** — it will be re-evaluated on the next hourly run.
+3. For each event within the 1-hour window, looks for an attached Google Doc (added via Google Drive attachment on the event).
+4. Reads that doc and searches for a heading that starts with **today's date** (e.g. `Feb 26, 2026 | Team Sync`).
+5. Under that date heading, looks for a **Topic** or **Topics** section.
+6. **If topics are present** → the meeting is required → it is left untouched.
+7. **If no date heading, or topics are empty** → the meeting is not required → the occurrence is cancelled and all attendees receive a cancellation email with the note: *"Meeting canceled since there are no topics to be discussed today"*.
 
 Events that are **not recurring**, or recurring events that have **no Google Doc attached**, are always skipped (never cancelled).
 
@@ -227,7 +228,7 @@ Use this to preview what the program would do without making any changes:
 python3 main.py --dry-run
 ```
 
-Sample output:
+Sample output (run at 08:00 — the 10:30 meeting is more than 1 hour away):
 ```
 2026-02-26 08:00:01 INFO  recurring-meeting-optimizer starting.
 2026-02-26 08:00:02 INFO  User timezone: Asia/Colombo
@@ -235,7 +236,7 @@ Sample output:
 2026-02-26 08:00:03 INFO  Found 3 recurring event(s) for 2026-02-26.
 2026-02-26 08:00:04 INFO  [DRY RUN] Would cancel 'SRE Leadership Sync' (reason: no_topics).
 2026-02-26 08:00:04 INFO  Keeping 'Weekly 1:1' (reason: has_topics).
-2026-02-26 08:00:04 INFO  Keeping 'Monthly All Hands' (reason: no_doc).
+2026-02-26 08:00:04 INFO  Skipping 'Monthly All Hands' (starts at 2026-02-26T10:30:00+05:30 — more than 1 hour away).
 2026-02-26 08:00:04 INFO  recurring-meeting-optimizer finished.
 ```
 
@@ -308,7 +309,7 @@ Waiting 5 s for Calendar API propagation...
 
 ## 10. Scheduling with Cron
 
-To run the program automatically every day (or at any interval), add a cron job.
+The program must run **every hour** so that each meeting is evaluated on the run that falls within its 1-hour window. A single daily invocation will only check meetings that happen to start within 1 hour of that fixed time — all other meetings on that day will be silently skipped.
 
 ### Find your Python path
 
@@ -325,12 +326,7 @@ crontab -e
 
 ### Add the cron entry
 
-**Run once daily at 1 AM:**
-```
-0 1 * * * cd /path/to/recurring-meeting-optimizer2 && /opt/homebrew/bin/python3 main.py >> /path/to/recurring-meeting-optimizer2/optimizer.log 2>&1
-```
-
-**Run every hour:**
+**Run every hour (recommended):**
 ```
 0 * * * * cd /path/to/recurring-meeting-optimizer2 && /opt/homebrew/bin/python3 main.py >> /path/to/recurring-meeting-optimizer2/optimizer.log 2>&1
 ```

@@ -97,6 +97,7 @@ The system runs on the user's machine with OAuth2 credentials that grant access 
 
 ```
 For each recurring event today:
+  ├─ Start time > 1 hour away?        → SKIP  (re-evaluated on next hourly run)
   ├─ No Google Doc attached?          → KEEP  (reason: no_doc)
   ├─ Doc unreadable (permission/net)? → KEEP  (reason: doc_error)
   ├─ No date heading for today?       → CANCEL (reason: no_topics)
@@ -200,7 +201,17 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 
 **FR-28** In dry-run mode, the system SHALL log the events it **would** cancel and the reason, without making any API write calls.
 
-### 4.6 Logging
+### 4.6 Cancellation Window
+
+**FR-44** On each run, the system SHALL skip any recurring event whose start time is more than **1 hour** in the future (relative to the current local time). Such events SHALL be re-evaluated on the next hourly run.
+
+**FR-45** An event is considered within the cancellation window when `now >= event_start − 1 hour`. Events that have already started are also within the window.
+
+**FR-46** The system SHALL log an INFO-level message for each event that is skipped because it is outside the cancellation window, including the event's start time.
+
+**FR-47** The system SHALL be invoked **hourly** via cron (or equivalent scheduler) so that every meeting is evaluated on the run that falls within its 1-hour window. A single daily invocation is insufficient, as it would only evaluate meetings within 1 hour of the scheduled run time.
+
+### 4.8 Logging
 
 **FR-29** The system SHALL write logs to both **stdout** and a rotating log file (`optimizer.log` in the working directory) at INFO level by default.
 
@@ -217,7 +228,7 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 
 **FR-33** All event summaries written to logs SHALL be truncated to **80 characters** and passed through `repr()` to neutralise embedded newlines and control characters.
 
-### 4.7 Authentication
+### 4.9 Authentication
 
 **FR-34** The system SHALL use OAuth 2.0 with an `InstalledAppFlow` (desktop application) to authenticate with Google APIs.
 
@@ -236,7 +247,7 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 - `https://www.googleapis.com/auth/documents.readonly`
 - `https://www.googleapis.com/auth/drive.readonly`
 
-### 4.8 Error Isolation
+### 4.10 Error Isolation
 
 **FR-41** If processing one event raises an unhandled exception, the system SHALL log the error and continue processing the remaining events. A single event failure SHALL NOT abort the run.
 
@@ -415,6 +426,7 @@ The following capabilities are **explicitly excluded** from this version:
 | `LOG_FILE` | `main` | `optimizer.log` | Log file path |
 | `_LOG_MAX_BYTES` | `main` | `10 485 760` (10 MB) | Log file rotation threshold |
 | `_LOG_BACKUP_COUNT` | `main` | `5` | Number of rotated log backups to keep |
+| `_CANCELLATION_WINDOW` | `calendar_service` | `1 hour` | Events starting more than this far in the future are skipped until the next run |
 | `_MAX_PAGES` | `calendar_service` | `100` | Maximum pagination pages per run |
 | `_MAX_API_RETRIES` | `calendar_service`, `docs_service` | `5` | Maximum API call retries |
 | `_MAX_CONTENT_ELEMENTS` | `docs_service` | `10 000` | Maximum doc elements parsed per document |
