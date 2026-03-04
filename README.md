@@ -1,6 +1,14 @@
 # Recurring Meeting Optimizer — User Guide
 
-Recurring Meeting Optimizer automatically cancels recurring Google Calendar meetings that have no agenda topics. Before each meeting, the organizer attaches a Google Doc to the calendar event. If the doc contains today's date heading with topics listed under it, the meeting proceeds. If the topics section is empty (or the date heading is absent), the meeting is cancelled and all attendees are notified.
+Recurring Meeting Optimizer keeps your calendar free of pointless meetings by automatically cancelling recurring Google Calendar events that have no agenda topics — and proactively warning your team before it comes to that.
+
+Each recurring meeting has a Google Doc attached to its calendar event, used as the running agenda. The program runs **every hour** via cron and drives a three-stage notification flow:
+
+1. **Day-before reminder** — on the first run of each day, it checks tomorrow's recurring meetings. If a meeting's doc has no topics yet, a ⚠️ warning is posted to the matching Google Chat space: *"Add topics by 1 hour before the meeting or it will be auto-cancelled."* If topics are already present, a ✅ confirmation is posted instead.
+2. **2-hour warning** — when a meeting is 1–2 hours away and still has no topics, a second ⚠️ warning is sent to the Chat space: *"Add topics within the next hour or the meeting will be cancelled."* The meeting is not cancelled yet.
+3. **1-hour cancellation** — when a meeting is under 1 hour away and topics are still absent, the occurrence is cancelled, all attendees are notified by email, and a ❌ cancellation message is posted to the Chat space.
+
+Each notification is sent **at most once per meeting per day**. Meetings with no Google Doc attached, and all non-recurring events, are never touched. Chat notifications are optional — they require a `chat_webhooks.json` config file; if it is absent the program cancels meetings silently as before.
 
 ---
 
