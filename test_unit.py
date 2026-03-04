@@ -470,6 +470,43 @@ class TestFindWebhook(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# UT-26 .. UT-29  calendar_service.is_within_warning_window
+# ---------------------------------------------------------------------------
+
+class TestWarningWindow(unittest.TestCase):
+    """Tests for calendar_service.is_within_warning_window() (2-hour window)."""
+
+    _TZ = datetime.timezone.utc
+
+    def _event(self, start_iso: str) -> dict:
+        return {'start': {'dateTime': start_iso}}
+
+    def test_ut26_meeting_more_than_two_hours_away_returns_false(self):
+        """UT-26: now=08:00, meeting=10:01 → more than 2 h away → False."""
+        now = datetime.datetime(2026, 2, 26, 8, 0, 0, tzinfo=self._TZ)
+        event = self._event('2026-02-26T10:01:00+00:00')
+        self.assertFalse(calendar_service.is_within_warning_window(event, now))
+
+    def test_ut27_meeting_exactly_two_hours_away_returns_true(self):
+        """UT-27: now=08:00, meeting=10:00 → exactly 2 h away → True."""
+        now = datetime.datetime(2026, 2, 26, 8, 0, 0, tzinfo=self._TZ)
+        event = self._event('2026-02-26T10:00:00+00:00')
+        self.assertTrue(calendar_service.is_within_warning_window(event, now))
+
+    def test_ut28_meeting_within_one_hour_also_returns_true(self):
+        """UT-28: now=09:30, meeting=10:00 → within 2-h window → True."""
+        now = datetime.datetime(2026, 2, 26, 9, 30, 0, tzinfo=self._TZ)
+        event = self._event('2026-02-26T10:00:00+00:00')
+        self.assertTrue(calendar_service.is_within_warning_window(event, now))
+
+    def test_ut29_missing_datetime_returns_false(self):
+        """UT-29: No dateTime field → False, no crash."""
+        now = datetime.datetime(2026, 2, 26, 8, 0, 0, tzinfo=self._TZ)
+        event = {'start': {'date': '2026-02-26'}}
+        self.assertFalse(calendar_service.is_within_warning_window(event, now))
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 

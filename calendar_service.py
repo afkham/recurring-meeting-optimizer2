@@ -31,8 +31,11 @@ _MAX_PAGES = 100
 # when num_retries > 0, with exponential back-off.
 _MAX_API_RETRIES = 5
 
-# Only process a meeting when we are within this window of its start time.
+# Cancel a meeting when we are within 1 hour of its start time.
 _CANCELLATION_WINDOW = datetime.timedelta(hours=1)
+
+# Send a 2-hour warning when we are between 1 and 2 hours from the start time.
+_WARNING_WINDOW = datetime.timedelta(hours=2)
 
 
 def _safe_summary(event: dict) -> str:
@@ -130,6 +133,23 @@ def is_within_cancellation_window(event: dict, now: datetime.datetime) -> bool:
     except ValueError:
         return False
     return now >= event_start - _CANCELLATION_WINDOW
+
+
+def is_within_warning_window(event: dict, now: datetime.datetime) -> bool:
+    """Return True if *now* is within 2 hours of the event's start time.
+
+    This covers both the 2-hour warning zone (1–2 h away) and the 1-hour
+    cancellation zone (< 1 h away).  Returns False for all-day events and
+    malformed dateTime strings.
+    """
+    start_str = event.get('start', {}).get('dateTime', '')
+    if not start_str:
+        return False
+    try:
+        event_start = datetime.datetime.fromisoformat(start_str)
+    except ValueError:
+        return False
+    return now >= event_start - _WARNING_WINDOW
 
 
 def cancel_event_occurrence(calendar_svc, event: dict, note: str) -> None:

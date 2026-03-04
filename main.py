@@ -25,6 +25,7 @@ Usage:
 
 import argparse
 import datetime
+import json
 import logging
 import logging.handlers
 import os
@@ -43,7 +44,7 @@ LOG_FILE = 'optimizer.log'
 _LOG_MAX_BYTES = 10 * 1024 * 1024
 _LOG_BACKUP_COUNT = 5
 
-LAST_REMINDER_PATH = 'last_reminder_date.txt'
+SENT_REMINDERS_PATH = 'sent_reminders.json'
 
 def configure_logging() -> None:
     fmt = '%(asctime)s %(levelname)-8s %(name)s: %(message)s'
@@ -96,24 +97,26 @@ def _safe_summary(event: dict) -> str:
     return repr(raw[:80])
 
 
-def _read_last_reminder_date() -> datetime.date | None:
-    """Return the date stored in LAST_REMINDER_PATH, or None if absent/unreadable."""
+def _load_sent_reminders(today: datetime.date) -> set[str]:
+    """Load per-meeting sent-reminder keys, dropping entries older than yesterday."""
+    cutoff = (today - datetime.timedelta(days=1)).isoformat()
     try:
-        with open(LAST_REMINDER_PATH, encoding='utf-8') as f:
-            return datetime.date.fromisoformat(f.read().strip())
-    except (OSError, ValueError):
-        return None
+        with open(SENT_REMINDERS_PATH, encoding='utf-8') as f:
+            raw = json.load(f)
+        return {k for k in raw if isinstance(k, str) and k[:10] >= cutoff}
+    except (OSError, json.JSONDecodeError):
+        return set()
 
 
-def _write_last_reminder_date(date: datetime.date) -> None:
-    """Write *date* as an ISO string to LAST_REMINDER_PATH."""
+def _save_sent_reminders(keys: set[str]) -> None:
+    """Persist the sent-reminders set to disk."""
     try:
-        with open(LAST_REMINDER_PATH, 'w', encoding='utf-8') as f:
-            f.write(date.isoformat())
+        with open(SENT_REMINDERS_PATH, 'w', encoding='utf-8') as f:
+            json.dump(sorted(keys), f, indent=2)
     except OSError as exc:
         logging.getLogger(__name__).warning(
             "Could not write '%s': %s — day-before reminders may repeat.",
-            LAST_REMINDER_PATH, exc,
+            SENT_REMINDERS_PATH, exc,
         )
 
 
@@ -123,9 +126,15 @@ def _send_day_before_reminders(
     docs_svc,
     tomorrow: datetime.date,
     tz_string: str,
+    sent_keys: set[str],
     dry_run: bool,
 ) -> None:
-    """Send day-before Chat webhook reminders for all of tomorrow's recurring meetings."""
+    """Send day-before Chat webhook reminders for all of tomorrow's recurring meetings.
+
+    *sent_keys* is updated in-place for each successfully sent reminder so that
+    re-runs never send the same message twice.  In dry-run mode the set is not
+    updated (so a subsequent live run will still send).
+    """
     logger = logging.getLogger(__name__)
     try:
         tz_info = ZoneInfo(tz_string)
@@ -140,6 +149,14 @@ def _send_day_before_reminders(
         try:
             webhook_url = chat_service.find_webhook(webhooks, summary_raw)
             if webhook_url is None:
+                continue
+
+            reminder_key = f"{tomorrow}|{summary_raw}"
+            if reminder_key in sent_keys:
+                logger.info(
+                    "Day-before reminder already sent for %r — skipping.",
+                    summary_raw[:60],
+                )
                 continue
 
             should_cancel, reason = canceller.should_cancel_event(event, docs_svc, tomorrow)
@@ -159,6 +176,9 @@ def _send_day_before_reminders(
                 text = chat_service.build_day_before_has_topics_message(summary_raw, time_str, url)
 
             chat_service.send_webhook_message(webhook_url, text, dry_run=dry_run)
+
+            if not dry_run:
+                sent_keys.add(reminder_key)
 
         except Exception:
             logger.warning(
@@ -185,6 +205,7 @@ def main() -> None:
     logger.info("recurring-meeting-optimizer starting.")
 
     today: datetime.date | None = None
+    sent_keys: set[str] | None = None
 
     try:
         creds = auth.get_credentials()
@@ -208,20 +229,19 @@ def main() -> None:
 
         logger.info("Checking meetings for: %s", today)
 
-        # Day-before reminders: send only on the first hourly run of the day.
+        # Load per-meeting dedup state once; persisted in finally block.
+        sent_keys = _load_sent_reminders(today)
+
+        # Day-before reminders (once per meeting per day).
         if webhooks:
-            if _read_last_reminder_date() != today:
-                tomorrow = today + datetime.timedelta(days=1)
-                try:
-                    _send_day_before_reminders(
-                        webhooks, calendar_svc, docs_svc,
-                        tomorrow, tz_string, dry_run=args.dry_run,
-                    )
-                    _write_last_reminder_date(today)
-                except Exception:
-                    logger.warning("Day-before reminder step failed.", exc_info=True)
-            else:
-                logger.info("Day-before reminders already sent today — skipping.")
+            tomorrow = today + datetime.timedelta(days=1)
+            try:
+                _send_day_before_reminders(
+                    webhooks, calendar_svc, docs_svc,
+                    tomorrow, tz_string, sent_keys, dry_run=args.dry_run,
+                )
+            except Exception:
+                logger.warning("Day-before reminder step failed.", exc_info=True)
 
         events = calendar_service.get_todays_recurring_events(calendar_svc, today, tz_string)
 
@@ -230,40 +250,79 @@ def main() -> None:
         else:
             for event in events:
                 try:
-                    if not calendar_service.is_within_cancellation_window(event, now):
+                    summary = event.get('summary', 'Untitled')
+
+                    if not calendar_service.is_within_warning_window(event, now):
                         start_str = event.get('start', {}).get('dateTime', '')
                         logger.info(
-                            "Skipping %s (starts at %s — more than 1 hour away).",
+                            "Skipping %s (starts at %s — more than 2 hours away).",
                             _safe_summary(event), start_str,
                         )
                         continue
-                    # 1-hour warning: peek at decision; notify Chat webhook before cancelling.
+
+                    if not calendar_service.is_within_cancellation_window(event, now):
+                        # 2-hour warning zone: warn but do not cancel yet.
+                        if webhooks:
+                            try:
+                                should_cancel, _ = canceller.should_cancel_event(
+                                    event, docs_svc, today
+                                )
+                                if should_cancel:
+                                    warn_key = f"warn2h|{today}|{summary}"
+                                    if warn_key not in sent_keys:
+                                        webhook_url = chat_service.find_webhook(
+                                            webhooks, summary
+                                        )
+                                        if webhook_url is not None:
+                                            text = chat_service.build_two_hour_warning_message(
+                                                summary, _doc_url(event)
+                                            )
+                                            chat_service.send_webhook_message(
+                                                webhook_url, text, dry_run=args.dry_run,
+                                            )
+                                            if not args.dry_run:
+                                                sent_keys.add(warn_key)
+                            except Exception:
+                                logger.warning(
+                                    "2-hour Chat warning failed for %s — continuing.",
+                                    _safe_summary(event), exc_info=True,
+                                )
+                        continue  # do not cancel yet
+
+                    # 1-hour cancellation zone: cancel if no topics, then notify.
+                    peek_cancel = False
                     if webhooks:
                         try:
-                            should_cancel, _ = canceller.should_cancel_event(
+                            peek_cancel, _ = canceller.should_cancel_event(
                                 event, docs_svc, today
                             )
-                            if should_cancel:
-                                webhook_url = chat_service.find_webhook(
-                                    webhooks, event.get('summary', '')
-                                )
-                                if webhook_url is not None:
-                                    text = chat_service.build_one_hour_warning_message(
-                                        event.get('summary', 'Untitled'),
-                                        _doc_url(event),
-                                    )
-                                    chat_service.send_webhook_message(
-                                        webhook_url, text, dry_run=args.dry_run,
-                                    )
                         except Exception:
-                            logger.warning(
-                                "1-hour Chat warning failed for %s — continuing.",
-                                _safe_summary(event), exc_info=True,
-                            )
+                            pass
 
                     canceller.process_event(
                         event, calendar_svc, docs_svc, today, dry_run=args.dry_run
                     )
+
+                    if peek_cancel and webhooks:
+                        try:
+                            cancelled_key = f"cancelled|{today}|{summary}"
+                            if cancelled_key not in sent_keys:
+                                webhook_url = chat_service.find_webhook(webhooks, summary)
+                                if webhook_url is not None:
+                                    text = chat_service.build_cancellation_notification_message(
+                                        summary, _doc_url(event)
+                                    )
+                                    chat_service.send_webhook_message(
+                                        webhook_url, text, dry_run=args.dry_run,
+                                    )
+                                    if not args.dry_run:
+                                        sent_keys.add(cancelled_key)
+                        except Exception:
+                            logger.warning(
+                                "Cancellation Chat notification failed for %s — continuing.",
+                                _safe_summary(event), exc_info=True,
+                            )
+
                 except Exception:
                     logger.exception(
                         "Error processing event %s — skipping and continuing.",
@@ -276,6 +335,9 @@ def main() -> None:
     except Exception:
         logger.exception("Fatal error — see traceback above.")
         sys.exit(1)
+    finally:
+        if sent_keys is not None:
+            _save_sent_reminders(sent_keys)
 
     logger.info("recurring-meeting-optimizer finished.")
 

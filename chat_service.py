@@ -161,12 +161,25 @@ def build_day_before_has_topics_message(
     return text
 
 
-def build_one_hour_warning_message(meeting_name: str, doc_url: str | None = None) -> str:
-    """Message sent to the Chat space just before auto-cancellation."""
+def build_two_hour_warning_message(meeting_name: str, doc_url: str | None = None) -> str:
+    """Message sent ~2 hours before the meeting when no topics are present."""
     text = (
-        f"\u26a0\ufe0f {meeting_name} starts in less than 1 hour.\n\n"
-        "No agenda topics were found. The meeting is about to be automatically cancelled.\n\n"
-        "Please add topics to the agenda doc now if you want the meeting to proceed."
+        f"\u26a0\ufe0f {meeting_name} starts in about 2 hours.\n\n"
+        "No agenda topics have been added yet. "
+        "If topics are not added within the next hour, the meeting will be automatically cancelled."
+    )
+    if doc_url:
+        text += f"\n\nMeeting doc: {doc_url}"
+    return text
+
+
+def build_cancellation_notification_message(
+    meeting_name: str, doc_url: str | None = None
+) -> str:
+    """Message sent after the meeting has been automatically cancelled."""
+    text = (
+        f"\u274c {meeting_name} has been automatically cancelled.\n\n"
+        "The meeting was cancelled because there were no agenda topics."
     )
     if doc_url:
         text += f"\n\nMeeting doc: {doc_url}"
