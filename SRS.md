@@ -255,17 +255,17 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 
 **FR-43** If all attached docs fail with access errors and none could be read, the system SHALL treat the result as `doc_error` and keep the meeting (safe side).
 
-### 4.11 Google Chat Reminders
+### 4.11 Google Chat Reminders (via Incoming Webhooks)
 
-**FR-48** The system SHALL send a day-before reminder to the Google Chat space associated with each recurring meeting scheduled for tomorrow.
+**FR-48** The system SHALL send reminders to Google Chat spaces via **incoming webhooks**. The user configures webhooks in `chat_webhooks.json` (a JSON object mapping label strings to webhook URLs). No additional Google Cloud configuration or OAuth scopes are required.
 
 **FR-49** The day-before reminder SHALL be sent only on the **first hourly run of each calendar day**. Subsequent runs on the same day SHALL skip the reminder step. The date of the last sent reminder SHALL be stored in `last_reminder_date.txt`.
 
-**FR-50** The system SHALL match a meeting to a Chat space using a **significant-word subset algorithm**: all significant words (non-stop-words, length > 1) in the space `displayName` must appear in the significant words of the meeting summary. If multiple spaces match, the one with the most significant words wins; ties broken alphabetically by `displayName`.
+**FR-50** The system SHALL match a meeting to a webhook using a **significant-word subset algorithm**: all significant words (non-stop-words, length > 1) in the config label must appear in the significant words of the meeting summary. If multiple labels match, the one with the most significant words wins; ties broken alphabetically by label for determinism.
 
 **FR-51** The following words are treated as stop words and excluded from matching: `a`, `an`, `the`, `and`, `or`, `of`, `in`, `on`, `at`, `to`, `for`, `with`, `is`, `it`, `its`, `be`, `by`, `as`, `up`, plus domain-specific terms: `meeting`, `sync`, `weekly`, `daily`, `monthly`, `standup`, `stand`, `call`, `team`.
 
-**FR-52** If no Chat space matches a meeting, the reminder for that meeting SHALL be silently skipped (logged at INFO level).
+**FR-52** If no webhook label matches a meeting, the reminder for that meeting SHALL be silently skipped (logged at INFO level).
 
 **FR-53** The day-before reminder message SHALL differ based on topic state at the time of the reminder:
 - **No topics yet**: warn that the meeting will be auto-cancelled 1 hour before start if no topics are added.
@@ -273,13 +273,13 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 
 **FR-54** If the agenda doc is unreadable (`doc_error`) or no doc is attached (`no_doc`) at reminder time, no day-before message SHALL be sent for that meeting.
 
-**FR-55** When the hourly run enters a meeting's 1-hour cancellation window and determines the meeting should be cancelled (no topics), the system SHALL send a final **1-hour warning** to the matched Chat space before cancelling the occurrence.
+**FR-55** When the hourly run enters a meeting's 1-hour cancellation window and determines the meeting should be cancelled (no topics), the system SHALL send a final **1-hour warning** to the matched webhook before cancelling the occurrence.
 
 **FR-56** In dry-run mode, Chat messages SHALL be logged but NOT sent.
 
-**FR-57** Any Chat API failure (space listing, message sending) SHALL be caught and logged at WARNING level. The failure SHALL NOT abort the main cancellation flow.
+**FR-57** Any webhook failure (HTTP POST error, non-200 response) SHALL be caught and logged at WARNING level. The failure SHALL NOT abort the main cancellation flow.
 
-**FR-58** The Google Chat API must be enabled in the Google Cloud project, and the OAuth consent must cover the `chat.spaces.readonly` and `chat.messages.create` scopes. Existing users will be prompted to re-authenticate on their next run after this version is deployed (handled automatically by the existing token-scope validation logic).
+**FR-58** Webhook URLs are stored in `chat_webhooks.json`, which is gitignored. If the file is absent, Chat reminders are silently disabled for that run. If the file is malformed, a warning is logged and Chat reminders are disabled.
 
 ---
 
@@ -378,8 +378,10 @@ Exit codes:
 | `credentials.json` | Read | OAuth 2.0 client secret downloaded from Google Cloud Console |
 | `token.json` | Read/Write | Cached OAuth 2.0 access and refresh tokens |
 | `optimizer.log` | Write | Rotating application log |
+| `chat_webhooks.json` | Read | Optional webhook config: `{"Label": "https://...webhook_url..."}` |
+| `last_reminder_date.txt` | Read/Write | Tracks the calendar day on which day-before reminders were last sent |
 
-All three files reside in the working directory from which the program is invoked.
+All files reside in the working directory from which the program is invoked.
 
 ---
 
@@ -422,8 +424,8 @@ The following capabilities are **explicitly excluded** from this version:
 
 ### 8.4 Notifications
 - Customising the cancellation email message
-- Sending notifications through channels other than Google Calendar (Slack, Teams, email, etc.)
-- Sending notifications for meetings that are kept
+- Sending notifications through channels other than Google Calendar and Google Chat webhooks (e.g. Slack, Teams, SMS)
+- Sending Chat notifications for meetings that are kept (day-before "topics present" confirmation is sent, but no same-day kept notification)
 
 ### 8.5 Configuration and Extensibility
 - Runtime configuration files (all limits and constants are hardcoded)
@@ -460,8 +462,9 @@ The following capabilities are **explicitly excluded** from this version:
 | `_MAX_DOC_ID_LENGTH` | `docs_service` | `128` | Maximum extracted doc ID length (chars) |
 | `CANCELLATION_NOTE` | `canceller` | See FR-25 | Text prepended to cancelled event descriptions |
 | `LAST_REMINDER_PATH` | `main` | `last_reminder_date.txt` | Tracks the date on which day-before reminders were last sent |
-| `_STOP_WORDS` | `chat_service` | See FR-51 | Words excluded from Chat space / meeting name matching |
-| `_MAX_SPACES_PAGES` | `chat_service` | `50` | Maximum pagination pages when listing Chat spaces |
+| `WEBHOOKS_PATH` | `chat_service` | `chat_webhooks.json` | Path to the webhook config file (gitignored) |
+| `_WEBHOOK_TIMEOUT` | `chat_service` | `30` | HTTP timeout for outbound webhook POST requests (seconds) |
+| `_STOP_WORDS` | `chat_service` | See FR-51 | Words excluded from webhook label / meeting name matching |
 
 ### 9.2 End-Section Names
 

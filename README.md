@@ -122,34 +122,50 @@ mv ~/Downloads/client_secret_*.json /path/to/recurring-meeting-optimizer2/creden
 
 ## 5. Setting Up Google Chat Reminders
 
-The program can send reminders to a Google Chat space when a meeting is coming up. This section explains how to enable it and how the space is matched to the meeting.
+The program can send reminders to Google Chat spaces via **incoming webhooks**. No extra Google Cloud setup or OAuth re-authentication is needed beyond what you already did in Section 4.
 
-### Enable the Chat API
+### Step 1 — Create an incoming webhook in your Chat space
 
-1. In your Google Cloud project go to **APIs & Services → Library**.
-2. Search for **Google Chat API** and click **ENABLE**.
+1. Open the Google Chat space associated with the meeting.
+2. Click the **space name** at the top to open space settings.
+3. Click **Apps & integrations → Add webhooks**.
+4. Enter a name (e.g. `Meeting Optimizer`) and click **Save**.
+5. Copy the webhook URL shown — it looks like `https://chat.googleapis.com/v1/spaces/.../messages?key=...`.
 
-### Re-authentication
+Repeat for each Chat space you want to receive reminders.
 
-After enabling the Chat API and updating the code, the program will detect that its stored OAuth token is missing the new Chat scopes and will automatically open the browser for a one-time re-consent. No manual token deletion is needed.
+### Step 2 — Create `chat_webhooks.json`
 
-### How spaces are matched to meetings
+In the project root, create a file called `chat_webhooks.json`:
 
-The program lists all Chat spaces you are a member of and finds the best match for each meeting using **significant-word overlap**:
+```json
+{
+    "SRE Leadership": "https://chat.googleapis.com/v1/spaces/.../messages?key=...",
+    "Product Review":  "https://chat.googleapis.com/v1/spaces/.../messages?key=..."
+}
+```
+
+Each **key** is a label whose significant words are matched against meeting summaries (see below). Each **value** is the webhook URL you copied in Step 1.
+
+> **Security note:** `chat_webhooks.json` is listed in `.gitignore` and will never be committed. Keep this file private — anyone with a webhook URL can post to that space.
+
+### How labels are matched to meetings
+
+The program compares each config label to each meeting summary using **significant-word overlap**:
 
 - Common filler words (`the`, `and`, `for`, `meeting`, `sync`, `weekly`, etc.) are ignored.
-- All remaining words in the **space name** must appear in the **meeting summary**.
-- If multiple spaces match, the one with the most words (most specific) wins.
+- All remaining words in the **config label** must appear in the **meeting summary**.
+- If multiple labels match, the one with the most significant words (most specific) wins.
 
 **Example:**
 
-| Meeting summary | Space name | Match? |
+| Meeting summary | Config label | Match? |
 |---|---|---|
 | `SRE Leadership Sync Up` | `SRE Leadership` | ✅ both words present |
 | `SRE Leadership Sync Up` | `SRE` | ✅ but weaker — loses to `SRE Leadership` |
 | `Product Review` | `Security Review` | ❌ `Security` not in meeting |
 
-**Tip:** Name your Chat spaces to reflect the significant words in the meeting title. For example, name the space `SRE Leadership` (not `SRE Leadership Meeting`) because `meeting` is a stop word and adds no discriminating value.
+**Tip:** Use labels that reflect the significant words in the meeting title. For example, `SRE Leadership` (not `SRE Leadership Meeting`) because `meeting` is a stop word.
 
 ### What messages are sent
 
@@ -160,6 +176,10 @@ The program lists all Chat spaces you are a member of and finds the best match f
 | 1-hour window reached — no topics found | ⚠️ Final warning that the meeting is about to be automatically cancelled |
 
 If no doc is attached, or the doc is unreadable, no day-before message is sent (safe side). The 1-hour warning is only sent when a cancellation is about to happen.
+
+### Disabling Chat reminders
+
+Simply delete or rename `chat_webhooks.json`. When the file is absent the program runs normally and silently skips all Chat notification steps.
 
 ### State file
 

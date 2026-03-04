@@ -13,17 +13,22 @@
 # limitations under the License.
 
 import datetime
+import json
 import logging
 import re
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import httplib2
+
 logger = logging.getLogger(__name__)
 
-# Hard cap on space-list pagination pages.
-_MAX_SPACES_PAGES = 50
-_MAX_API_RETRIES  = 5
+# Path to the webhook config file (gitignored — contains sensitive keys).
+WEBHOOKS_PATH = 'chat_webhooks.json'
 
-# Words that carry no discriminating power for space-to-meeting matching.
+# Timeout for outbound webhook HTTP requests.
+_WEBHOOK_TIMEOUT = 30
+
+# Words that carry no discriminating power for config-key-to-meeting matching.
 # Domain-specific terms like 'meeting', 'sync', 'weekly' are included because
 # almost every recurring event name contains them.
 _STOP_WORDS = frozenset({
@@ -37,71 +42,83 @@ _WORD_RE = re.compile(r'[a-z0-9]+')
 
 
 def _significant_words(text: str) -> frozenset[str]:
-    """Return lowercase alphanumeric tokens from *text*, excluding stop words and single chars."""
+    """Return lowercase alphanumeric tokens, excluding stop words and single chars."""
     tokens = _WORD_RE.findall(text.lower())
     return frozenset(t for t in tokens if t not in _STOP_WORDS and len(t) > 1)
 
 
-def list_spaces(chat_svc) -> list[dict]:
-    """Return all Chat spaces the authenticated user is a member of."""
-    spaces: list[dict] = []
-    page_token = None
-    pages = 0
-    while True:
-        if pages >= _MAX_SPACES_PAGES:
-            logger.warning("Space listing pagination cap (%d) reached.", _MAX_SPACES_PAGES)
-            break
-        kwargs: dict = {'pageSize': 100}
-        if page_token:
-            kwargs['pageToken'] = page_token
-        resp = chat_svc.spaces().list(**kwargs).execute(num_retries=_MAX_API_RETRIES)
-        pages += 1
-        spaces.extend(resp.get('spaces', []))
-        page_token = resp.get('nextPageToken')
-        if not page_token:
-            break
-    logger.info("Fetched %d Chat space(s).", len(spaces))
-    return spaces
+def load_webhooks(path: str = WEBHOOKS_PATH) -> dict[str, str]:
+    """Load the webhook config file and return a {label: url} dict.
+
+    Returns an empty dict if the file does not exist (Chat reminders silently
+    disabled) or is malformed (warning logged).
+
+    Config file format (chat_webhooks.json):
+        {
+            "SRE Leadership": "https://chat.googleapis.com/v1/spaces/.../messages?key=...",
+            "Product Review": "https://chat.googleapis.com/v1/spaces/.../messages?key=..."
+        }
+    The key is a label whose significant words are matched against meeting summaries.
+    """
+    try:
+        with open(path, encoding='utf-8') as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        logger.info("No webhook config file found at '%s' — Chat reminders disabled.", path)
+        return {}
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("Could not load webhook config '%s': %s — Chat reminders disabled.", path, exc)
+        return {}
+
+    if not isinstance(data, dict):
+        logger.warning("Webhook config '%s' must be a JSON object — Chat reminders disabled.", path)
+        return {}
+
+    webhooks = {
+        k: v for k, v in data.items()
+        if isinstance(k, str) and isinstance(v, str)
+    }
+    logger.info("Loaded %d webhook(s) from '%s'.", len(webhooks), path)
+    return webhooks
 
 
-def find_matching_space(spaces: list[dict], meeting_summary: str) -> dict | None:
-    """Return the Chat space whose displayName best matches *meeting_summary*, or None.
+def find_webhook(webhooks: dict[str, str], meeting_summary: str) -> str | None:
+    """Return the webhook URL whose label best matches *meeting_summary*, or None.
 
-    Matching rule: ALL significant words in the space displayName must appear in
-    the significant words of the meeting summary.  Among multiple qualifying
-    spaces, the one with the most significant words (most specific) wins.
-    Ties are broken alphabetically by displayName for determinism.
+    Matching rule: ALL significant words in the config label must appear in the
+    significant words of the meeting summary. Among multiple matches, the label
+    with the most significant words (most specific) wins. Ties broken
+    alphabetically by label for determinism.
     """
     meeting_words = _significant_words(meeting_summary)
-    best: dict | None = None
+    best_label: str | None = None
+    best_url: str | None = None
     best_score = 0
 
-    for space in spaces:
-        display_name = space.get('displayName', '')
-        if not display_name:
+    for label, url in webhooks.items():
+        label_words = _significant_words(label)
+        if not label_words:
             continue
-        space_words = _significant_words(display_name)
-        if not space_words:
+        if not label_words.issubset(meeting_words):
             continue
-        if not space_words.issubset(meeting_words):
-            continue
-        score = len(space_words)
+        score = len(label_words)
         if score > best_score or (
             score == best_score
-            and best is not None
-            and display_name < best.get('displayName', '')
+            and best_label is not None
+            and label < best_label
         ):
-            best = space
+            best_label = label
+            best_url = url
             best_score = score
 
-    if best:
+    if best_label:
         logger.info(
-            "Matched space '%s' to meeting %r.",
-            best.get('displayName'), meeting_summary[:60],
+            "Matched webhook label '%s' to meeting %r.",
+            best_label, meeting_summary[:60],
         )
     else:
-        logger.info("No Chat space matched meeting %r.", meeting_summary[:60])
-    return best
+        logger.info("No webhook matched meeting %r.", meeting_summary[:60])
+    return best_url
 
 
 def format_event_time(event: dict, tz_info) -> str:
@@ -143,22 +160,25 @@ def build_one_hour_warning_message(meeting_name: str) -> str:
     )
 
 
-def send_reminder_message(
-    chat_svc,
-    space_name: str,
-    text: str,
-    dry_run: bool = False,
-) -> None:
-    """Post *text* to a Chat space identified by *space_name* (resource name).
+def send_webhook_message(webhook_url: str, text: str, dry_run: bool = False) -> None:
+    """POST *text* to a Google Chat incoming webhook URL.
 
     In dry-run mode the message is logged but not sent.
     Exceptions are NOT caught here — the caller is responsible for isolation.
     """
     if dry_run:
-        logger.info("[DRY RUN] Would send Chat message to %s:\n%s", space_name, text)
+        logger.info("[DRY RUN] Would POST Chat message to webhook:\n%s", text)
         return
-    chat_svc.spaces().messages().create(
-        parent=space_name,
-        body={'text': text},
-    ).execute(num_retries=_MAX_API_RETRIES)
-    logger.info("Sent Chat reminder to %s.", space_name)
+    h = httplib2.Http(timeout=_WEBHOOK_TIMEOUT)
+    body = json.dumps({'text': text}).encode('utf-8')
+    resp, content = h.request(
+        webhook_url,
+        method='POST',
+        body=body,
+        headers={'Content-Type': 'application/json'},
+    )
+    if resp.status != 200:
+        raise RuntimeError(
+            f"Webhook POST failed with status {resp.status}: {content!r}"
+        )
+    logger.info("Sent Chat webhook message (status %d).", resp.status)

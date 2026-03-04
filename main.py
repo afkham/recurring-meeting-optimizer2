@@ -109,15 +109,14 @@ def _write_last_reminder_date(date: datetime.date) -> None:
 
 
 def _send_day_before_reminders(
-    chat_svc,
+    webhooks: dict,
     calendar_svc,
     docs_svc,
     tomorrow: datetime.date,
     tz_string: str,
-    spaces: list,
     dry_run: bool,
 ) -> None:
-    """Send day-before Chat reminders for all of tomorrow's recurring meetings."""
+    """Send day-before Chat webhook reminders for all of tomorrow's recurring meetings."""
     logger = logging.getLogger(__name__)
     try:
         tz_info = ZoneInfo(tz_string)
@@ -130,8 +129,8 @@ def _send_day_before_reminders(
     for event in events:
         summary_raw = event.get('summary', 'Untitled')
         try:
-            space = chat_service.find_matching_space(spaces, summary_raw)
-            if space is None:
+            webhook_url = chat_service.find_webhook(webhooks, summary_raw)
+            if webhook_url is None:
                 continue
 
             should_cancel, reason = canceller.should_cancel_event(event, docs_svc, tomorrow)
@@ -149,7 +148,7 @@ def _send_day_before_reminders(
             else:
                 text = chat_service.build_day_before_has_topics_message(summary_raw, time_str)
 
-            chat_service.send_reminder_message(chat_svc, space['name'], text, dry_run=dry_run)
+            chat_service.send_webhook_message(webhook_url, text, dry_run=dry_run)
 
         except Exception:
             logger.warning(
@@ -181,17 +180,8 @@ def main() -> None:
         creds = auth.get_credentials()
         calendar_svc, docs_svc, _ = auth.build_services(creds)
 
-        # Chat service — failures here are non-fatal; reminders are best-effort.
-        chat_svc = None
-        spaces: list = []
-        try:
-            chat_svc = auth.build_chat_service(creds)
-            spaces = chat_service.list_spaces(chat_svc)
-        except Exception:
-            logger.warning(
-                "Could not initialise Chat service — reminders disabled for this run.",
-                exc_info=True,
-            )
+        # Load webhook config — empty dict means Chat reminders are disabled.
+        webhooks = chat_service.load_webhooks()
 
         tz_string = calendar_service.get_user_timezone(calendar_svc)
         logger.info("User timezone: %s", tz_string)
@@ -209,13 +199,13 @@ def main() -> None:
         logger.info("Checking meetings for: %s", today)
 
         # Day-before reminders: send only on the first hourly run of the day.
-        if chat_svc is not None:
+        if webhooks:
             if _read_last_reminder_date() != today:
                 tomorrow = today + datetime.timedelta(days=1)
                 try:
                     _send_day_before_reminders(
-                        chat_svc, calendar_svc, docs_svc,
-                        tomorrow, tz_string, spaces, dry_run=args.dry_run,
+                        webhooks, calendar_svc, docs_svc,
+                        tomorrow, tz_string, dry_run=args.dry_run,
                     )
                     _write_last_reminder_date(today)
                 except Exception:
@@ -237,22 +227,22 @@ def main() -> None:
                             _safe_summary(event), start_str,
                         )
                         continue
-                    # 1-hour warning: peek at decision; notify Chat space before cancelling.
-                    if chat_svc is not None:
+                    # 1-hour warning: peek at decision; notify Chat webhook before cancelling.
+                    if webhooks:
                         try:
                             should_cancel, _ = canceller.should_cancel_event(
                                 event, docs_svc, today
                             )
                             if should_cancel:
-                                space = chat_service.find_matching_space(
-                                    spaces, event.get('summary', '')
+                                webhook_url = chat_service.find_webhook(
+                                    webhooks, event.get('summary', '')
                                 )
-                                if space is not None:
+                                if webhook_url is not None:
                                     text = chat_service.build_one_hour_warning_message(
                                         event.get('summary', 'Untitled')
                                     )
-                                    chat_service.send_reminder_message(
-                                        chat_svc, space['name'], text, dry_run=args.dry_run,
+                                    chat_service.send_webhook_message(
+                                        webhook_url, text, dry_run=args.dry_run,
                                     )
                         except Exception:
                             logger.warning(

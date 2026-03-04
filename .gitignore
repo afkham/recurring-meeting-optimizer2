@@ -4,6 +4,7 @@ test_token.json
 optimizer.log
 last_success.txt
 last_reminder_date.txt
+chat_webhooks.json
 __pycache__/
 *.pyc
 .swp
