@@ -422,6 +422,21 @@ python3 main.py
 
 Meetings with no topics are cancelled and all attendees receive a cancellation email. If `chat_webhooks.json` is present, the matched Chat spaces also receive notifications.
 
+### Running for a specific date or time
+
+```bash
+# Run as if today were Feb 24 2026 (all meetings on that date are evaluated)
+python3 main.py --date 2026-02-24
+
+# Run as if it is 9:00 AM on Feb 25 2026 (time windows are respected)
+python3 main.py --date 2026-02-25T09:00
+
+# Combine with --dry-run to preview without making changes
+python3 main.py --date 2026-02-25T09:00 --dry-run
+```
+
+When only a date is given (no time), `now` is set to 23:59 so all meetings on that date pass both the 2-hour and 1-hour window checks. When a time is given, the windows are evaluated at that exact time — useful for testing or backfilling a missed cron run.
+
 ---
 
 ## 10. Running the Tests
@@ -502,10 +517,12 @@ crontab -e
 
 **Run every hour (recommended):**
 ```
-0 * * * * cd /path/to/recurring-meeting-optimizer2 && /opt/homebrew/bin/python3 main.py >> /path/to/recurring-meeting-optimizer2/optimizer.log 2>&1
+0 * * * * cd /path/to/recurring-meeting-optimizer2 && /opt/homebrew/bin/python3 main.py --date $(date +\%Y-\%m-\%dT\%H:\%M) >> /path/to/recurring-meeting-optimizer2/optimizer.log 2>&1
 ```
 
 Replace `/path/to/recurring-meeting-optimizer2` with the actual path on your machine.
+
+The `--date` flag passes the current date and time on each run so the 2-hour warning and 1-hour cancellation time windows are evaluated against the actual clock. In crontab, `%` must be escaped as `\%`.
 
 ### Important notes for macOS
 

@@ -359,12 +359,20 @@ The Drive API scope (`drive.readonly`) is used implicitly by the Calendar API to
 ### 6.4 Command-Line Interface
 
 ```
-python3 main.py [--dry-run]
+python3 main.py [--dry-run] [--date YYYY-MM-DD[THH:MM]]
 ```
 
 | Argument | Type | Description |
 |---|---|---|
 | `--dry-run` | Flag | Log decisions without making changes |
+| `--date YYYY-MM-DD` | Option | Run for the specified date, with `now` set to 23:59 so all meetings on that date pass window checks |
+| `--date YYYY-MM-DDTHH:MM` | Option | Run for the specified date and time; 2-hour warning and 1-hour cancellation windows are evaluated against the given time |
+
+When scheduled via cron, `--date` is passed with the current timestamp so the time windows reflect the actual clock time:
+
+```
+0 * * * * cd /path/to/project && python3 main.py --date $(date +\%Y-\%m-\%dT\%H:\%M) >> optimizer.log 2>&1
+```
 
 Exit codes:
 
