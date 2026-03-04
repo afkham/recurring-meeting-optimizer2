@@ -36,6 +36,7 @@ import auth
 import calendar_service
 import canceller
 import chat_service
+import docs_service
 
 LOG_FILE = 'optimizer.log'
 # Rotate at 10 MB, keep 5 backups.
@@ -77,6 +78,14 @@ def configure_logging() -> None:
         os.chmod(LOG_FILE, stat.S_IRUSR | stat.S_IWUSR)
     except OSError:
         pass
+
+
+def _doc_url(event: dict) -> str | None:
+    """Return the Google Docs URL for the first valid doc attached to *event*, or None."""
+    doc_ids = docs_service.extract_doc_ids_from_event(event)
+    if not doc_ids:
+        return None
+    return f'https://docs.google.com/document/d/{doc_ids[0]}/edit'
 
 
 def _safe_summary(event: dict) -> str:
@@ -143,10 +152,11 @@ def _send_day_before_reminders(
                 continue
 
             time_str = chat_service.format_event_time(event, tz_info)
+            url = _doc_url(event)
             if should_cancel:
-                text = chat_service.build_day_before_no_topics_message(summary_raw, time_str)
+                text = chat_service.build_day_before_no_topics_message(summary_raw, time_str, url)
             else:
-                text = chat_service.build_day_before_has_topics_message(summary_raw, time_str)
+                text = chat_service.build_day_before_has_topics_message(summary_raw, time_str, url)
 
             chat_service.send_webhook_message(webhook_url, text, dry_run=dry_run)
 
@@ -239,7 +249,8 @@ def main() -> None:
                                 )
                                 if webhook_url is not None:
                                     text = chat_service.build_one_hour_warning_message(
-                                        event.get('summary', 'Untitled')
+                                        event.get('summary', 'Untitled'),
+                                        _doc_url(event),
                                     )
                                     chat_service.send_webhook_message(
                                         webhook_url, text, dry_run=args.dry_run,

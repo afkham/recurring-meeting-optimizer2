@@ -133,31 +133,44 @@ def format_event_time(event: dict, tz_info) -> str:
         return start_str
 
 
-def build_day_before_no_topics_message(meeting_name: str, time_str: str) -> str:
+def build_day_before_no_topics_message(
+    meeting_name: str, time_str: str, doc_url: str | None = None
+) -> str:
     """Message sent the day before when no topics have been added yet."""
-    return (
+    text = (
         f"\u26a0\ufe0f Reminder: {meeting_name} is scheduled for tomorrow at {time_str}.\n\n"
         "No agenda topics have been added yet. Please add topics to the meeting doc.\n\n"
         "If no topics are added by 1 hour before the meeting, "
         "it will be automatically cancelled."
     )
+    if doc_url:
+        text += f"\n\nMeeting doc: {doc_url}"
+    return text
 
 
-def build_day_before_has_topics_message(meeting_name: str, time_str: str) -> str:
+def build_day_before_has_topics_message(
+    meeting_name: str, time_str: str, doc_url: str | None = None
+) -> str:
     """Message sent the day before when topics are already present."""
-    return (
+    text = (
         f"\u2705 {meeting_name} is scheduled for tomorrow at {time_str}.\n\n"
         "Agenda topics are already present \u2014 the meeting will go ahead as scheduled."
     )
+    if doc_url:
+        text += f"\n\nMeeting doc: {doc_url}"
+    return text
 
 
-def build_one_hour_warning_message(meeting_name: str) -> str:
+def build_one_hour_warning_message(meeting_name: str, doc_url: str | None = None) -> str:
     """Message sent to the Chat space just before auto-cancellation."""
-    return (
+    text = (
         f"\u26a0\ufe0f {meeting_name} starts in less than 1 hour.\n\n"
         "No agenda topics were found. The meeting is about to be automatically cancelled.\n\n"
         "Please add topics to the agenda doc now if you want the meeting to proceed."
     )
+    if doc_url:
+        text += f"\n\nMeeting doc: {doc_url}"
+    return text
 
 
 def send_webhook_message(webhook_url: str, text: str, dry_run: bool = False) -> None:
