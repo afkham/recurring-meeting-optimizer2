@@ -190,7 +190,17 @@ def main() -> None:
         action='store_true',
         help='Log what would be cancelled without actually cancelling anything.',
     )
+    parser.add_argument(
+        '--date',
+        metavar='YYYY-MM-DD',
+        help='Override the date to check (e.g. 2026-02-24). '
+             'All meetings on that date are evaluated regardless of time windows. '
+             'Day-before reminders are skipped. Implies --dry-run.',
+    )
     args = parser.parse_args()
+
+    if args.date:
+        args.dry_run = True  # past-date runs are always non-destructive
 
     if args.dry_run:
         logger.info("=== DRY RUN MODE — no meetings will be cancelled ===")
@@ -211,13 +221,26 @@ def main() -> None:
         logger.info("User timezone: %s", tz_string)
 
         try:
-            now   = datetime.datetime.now(ZoneInfo(tz_string))
-            today = now.date()
+            tz_info = ZoneInfo(tz_string)
         except ZoneInfoNotFoundError:
             logger.warning(
                 "Unknown timezone '%s' from Calendar API; falling back to UTC.", tz_string
             )
-            now   = datetime.datetime.now(ZoneInfo('UTC'))
+            tz_info = ZoneInfo('UTC')
+
+        if args.date:
+            try:
+                today = datetime.date.fromisoformat(args.date)
+            except ValueError:
+                logger.error("Invalid --date value %r — expected YYYY-MM-DD.", args.date)
+                sys.exit(1)
+            # Set now to end-of-day so all meetings on that date pass window checks.
+            now = datetime.datetime.combine(
+                today, datetime.time(23, 59, 59), tzinfo=tz_info
+            )
+            logger.info("Date override: checking meetings for %s (all windows open).", today)
+        else:
+            now   = datetime.datetime.now(tz_info)
             today = now.date()
 
         logger.info("Checking meetings for: %s", today)
@@ -225,8 +248,8 @@ def main() -> None:
         # Load per-meeting dedup state once; persisted in finally block.
         sent_keys = _load_sent_reminders(today)
 
-        # Day-before reminders (once per meeting per day).
-        if webhooks:
+        # Day-before reminders — skipped when --date override is active.
+        if webhooks and not args.date:
             tomorrow = today + datetime.timedelta(days=1)
             try:
                 _send_day_before_reminders(
