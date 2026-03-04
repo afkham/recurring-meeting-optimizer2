@@ -117,6 +117,7 @@ def _send_day_before_reminders(
     webhooks: dict,
     calendar_svc,
     docs_svc,
+    today: datetime.date,
     tomorrow: datetime.date,
     tz_string: str,
     sent_keys: set[str],
@@ -144,7 +145,7 @@ def _send_day_before_reminders(
             if webhook_url is None:
                 continue
 
-            reminder_key = f"{tomorrow}|day_before|{summary_raw}"
+            reminder_key = f"{today}|day_before|{summary_raw}"
             if reminder_key in sent_keys:
                 logger.info(
                     "Day-before reminder already sent for %r — skipping.",
@@ -192,9 +193,10 @@ def main() -> None:
     )
     parser.add_argument(
         '--date',
-        metavar='YYYY-MM-DD',
-        help='Date to run for (YYYY-MM-DD). Defaults to today. '
-             'All meetings on that date are evaluated regardless of time windows. '
+        metavar='YYYY-MM-DD[THH:MM]',
+        help='Date (and optional time) to run for, e.g. 2026-02-25 or 2026-02-25T09:00. '
+             'Defaults to now. When only a date is given, time is set to 23:59 so all '
+             'meetings on that date pass window checks. '
              'Combine with --dry-run to preview without making changes.',
     )
     args = parser.parse_args()
@@ -227,15 +229,23 @@ def main() -> None:
 
         if args.date:
             try:
-                today = datetime.date.fromisoformat(args.date)
+                if 'T' in args.date:
+                    naive_dt = datetime.datetime.fromisoformat(args.date)
+                    today = naive_dt.date()
+                    now   = naive_dt.replace(tzinfo=tz_info)
+                else:
+                    today = datetime.date.fromisoformat(args.date)
+                    # No time given: use end-of-day so all meetings pass window checks.
+                    now = datetime.datetime.combine(
+                        today, datetime.time(23, 59, 59), tzinfo=tz_info
+                    )
             except ValueError:
-                logger.error("Invalid --date value %r — expected YYYY-MM-DD.", args.date)
+                logger.error(
+                    "Invalid --date value %r — expected YYYY-MM-DD or YYYY-MM-DDTHH:MM.",
+                    args.date,
+                )
                 sys.exit(1)
-            # Set now to end-of-day so all meetings on that date pass window checks.
-            now = datetime.datetime.combine(
-                today, datetime.time(23, 59, 59), tzinfo=tz_info
-            )
-            logger.info("Date override active: running for %s.", today)
+            logger.info("Date override active: running for %s (now=%s).", today, now.strftime('%H:%M %Z'))
         else:
             now   = datetime.datetime.now(tz_info)
             today = now.date()
@@ -251,7 +261,7 @@ def main() -> None:
             try:
                 _send_day_before_reminders(
                     webhooks, calendar_svc, docs_svc,
-                    tomorrow, tz_string, sent_keys, dry_run=args.dry_run,
+                    today, tomorrow, tz_string, sent_keys, dry_run=args.dry_run,
                 )
             except Exception:
                 logger.warning("Day-before reminder step failed.", exc_info=True)
