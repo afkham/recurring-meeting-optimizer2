@@ -201,15 +201,15 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 
 **FR-28** In dry-run mode, the system SHALL log the events it **would** cancel and the reason, without making any API write calls.
 
-### 4.6 Cancellation Window
+### 4.6 Cancellation and Warning Windows
 
-**FR-44** On each run, the system SHALL skip any recurring event whose start time is more than **1 hour** in the future (relative to the current local time). Such events SHALL be re-evaluated on the next hourly run.
+**FR-44** On each run, the system SHALL skip any recurring event whose start time is more than **2 hours** in the future (relative to the current local time). Such events SHALL be re-evaluated on the next hourly run.
 
-**FR-45** An event is considered within the cancellation window when `now >= event_start − 1 hour`. Events that have already started are also within the window.
+**FR-45** An event is within the **2-hour warning window** when `now >= event_start − 2 hours` and outside the 1-hour cancellation window. An event is within the **1-hour cancellation window** when `now >= event_start − 1 hour`. Events that have already started are also within the cancellation window.
 
-**FR-46** The system SHALL log an INFO-level message for each event that is skipped because it is outside the cancellation window, including the event's start time.
+**FR-46** The system SHALL log an INFO-level message for each event that is skipped because it is outside the 2-hour warning window, including the event's start time.
 
-**FR-47** The system SHALL be invoked **hourly** via cron (or equivalent scheduler) so that every meeting is evaluated on the run that falls within its 1-hour window. A single daily invocation is insufficient, as it would only evaluate meetings within 1 hour of the scheduled run time.
+**FR-47** The system SHALL be invoked **hourly** via cron (or equivalent scheduler) so that every meeting passes through both the 2-hour warning window and the 1-hour cancellation window on successive runs.
 
 ### 4.8 Logging
 
@@ -257,25 +257,27 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 
 ### 4.11 Google Chat Reminders (via Incoming Webhooks)
 
-**FR-48** The system SHALL send reminders to Google Chat spaces via **incoming webhooks**. The user configures webhooks in `chat_webhooks.json` (a JSON object mapping label strings to webhook URLs). No additional Google Cloud configuration or OAuth scopes are required.
+**FR-48** The system SHALL send three types of notifications to Google Chat spaces via **incoming webhooks**. The user configures webhooks in `chat_webhooks.json` (a JSON object mapping label strings to webhook URLs). No additional Google Cloud configuration or OAuth scopes are required.
 
-**FR-49** The day-before reminder SHALL be sent only on the **first hourly run of each calendar day**. Subsequent runs on the same day SHALL skip the reminder step. The date of the last sent reminder SHALL be stored in `last_reminder_date.txt`.
+**FR-49** Each notification type is deduplicated per meeting per day using `sent_reminders.json`. Keys have the format `YYYY-MM-DD|type|meeting_summary`. Entries older than yesterday are pruned on load. In dry-run mode, keys are never recorded (so a subsequent live run still sends). The three key types are `day_before`, `warn2h`, and `cancelled`.
 
 **FR-50** The system SHALL match a meeting to a webhook using a **significant-word subset algorithm**: all significant words (non-stop-words, length > 1) in the config label must appear in the significant words of the meeting summary. If multiple labels match, the one with the most significant words wins; ties broken alphabetically by label for determinism.
 
 **FR-51** The following words are treated as stop words and excluded from matching: `a`, `an`, `the`, `and`, `or`, `of`, `in`, `on`, `at`, `to`, `for`, `with`, `is`, `it`, `its`, `be`, `by`, `as`, `up`, plus domain-specific terms: `meeting`, `sync`, `weekly`, `daily`, `monthly`, `standup`, `stand`, `call`, `team`.
 
-**FR-52** If no webhook label matches a meeting, the reminder for that meeting SHALL be silently skipped (logged at INFO level).
+**FR-52** If no webhook label matches a meeting, all notifications for that meeting SHALL be silently skipped (logged at INFO level).
 
-**FR-53** The day-before reminder message SHALL differ based on topic state at the time of the reminder:
-- **No topics yet**: warn that the meeting will be auto-cancelled 1 hour before start if no topics are added.
-- **Topics present**: confirm the meeting will go ahead.
+**FR-53** **Day-before reminder** — checked on every run for tomorrow's recurring meetings:
+- **No topics yet**: send ⚠️ "If topics not added by 1 hour before the meeting time tomorrow, the meeting will be automatically cancelled" + meeting doc link.
+- **Topics present**: send ✅ "Meeting will go ahead as scheduled" + meeting doc link.
+- If the doc is unreadable (`doc_error`) or absent (`no_doc`), no message is sent.
+- Sent at most once per meeting per day (key type: `day_before`).
 
-**FR-54** If the agenda doc is unreadable (`doc_error`) or no doc is attached (`no_doc`) at reminder time, no day-before message SHALL be sent for that meeting.
+**FR-54** **2-hour warning** — when a meeting enters the 2-hour warning window (1–2 hours before start) and has no topics: send ⚠️ "If topics not added within the next hour, the meeting will be automatically cancelled" + meeting doc link. The meeting is **not** cancelled at this point. Sent at most once per meeting per day (key type: `warn2h`).
 
-**FR-55** When the hourly run enters a meeting's 1-hour cancellation window and determines the meeting should be cancelled (no topics), the system SHALL send a final **1-hour warning** to the matched webhook before cancelling the occurrence.
+**FR-55** **Cancellation notification** — after the meeting is cancelled at the 1-hour mark: send ❌ "Meeting has been automatically cancelled because there were no agenda topics" + meeting doc link. Sent at most once per meeting per day (key type: `cancelled`).
 
-**FR-56** In dry-run mode, Chat messages SHALL be logged but NOT sent.
+**FR-56** In dry-run mode, Chat messages SHALL be logged but NOT sent, and no keys SHALL be recorded in `sent_reminders.json`.
 
 **FR-57** Any webhook failure (HTTP POST error, non-200 response) SHALL be caught and logged at WARNING level. The failure SHALL NOT abort the main cancellation flow.
 
@@ -379,7 +381,7 @@ Exit codes:
 | `token.json` | Read/Write | Cached OAuth 2.0 access and refresh tokens |
 | `optimizer.log` | Write | Rotating application log |
 | `chat_webhooks.json` | Read | Optional webhook config: `{"Label": "https://...webhook_url..."}` |
-| `last_reminder_date.txt` | Read/Write | Tracks the calendar day on which day-before reminders were last sent |
+| `sent_reminders.json` | Read/Write | Per-meeting notification deduplication store; pruned automatically |
 
 All files reside in the working directory from which the program is invoked.
 
@@ -454,14 +456,15 @@ The following capabilities are **explicitly excluded** from this version:
 | `LOG_FILE` | `main` | `optimizer.log` | Log file path |
 | `_LOG_MAX_BYTES` | `main` | `10 485 760` (10 MB) | Log file rotation threshold |
 | `_LOG_BACKUP_COUNT` | `main` | `5` | Number of rotated log backups to keep |
-| `_CANCELLATION_WINDOW` | `calendar_service` | `1 hour` | Events starting more than this far in the future are skipped until the next run |
+| `_CANCELLATION_WINDOW` | `calendar_service` | `1 hour` | Events within this window of their start time are evaluated for cancellation |
+| `_WARNING_WINDOW` | `calendar_service` | `2 hours` | Events within this window (but outside the 1-hour cancellation window) receive a 2-hour warning |
 | `_MAX_PAGES` | `calendar_service` | `100` | Maximum pagination pages per run |
 | `_MAX_API_RETRIES` | `calendar_service`, `docs_service` | `5` | Maximum API call retries |
 | `_MAX_CONTENT_ELEMENTS` | `docs_service` | `10 000` | Maximum doc elements parsed per document |
 | `_MAX_URL_LENGTH` | `docs_service` | `2 048` | Maximum attachment fileUrl length (chars) |
 | `_MAX_DOC_ID_LENGTH` | `docs_service` | `128` | Maximum extracted doc ID length (chars) |
 | `CANCELLATION_NOTE` | `canceller` | See FR-25 | Text prepended to cancelled event descriptions |
-| `LAST_REMINDER_PATH` | `main` | `last_reminder_date.txt` | Tracks the date on which day-before reminders were last sent |
+| `SENT_REMINDERS_PATH` | `main` | `sent_reminders.json` | Per-meeting sent-reminder deduplication store (gitignored) |
 | `WEBHOOKS_PATH` | `chat_service` | `chat_webhooks.json` | Path to the webhook config file (gitignored) |
 | `_WEBHOOK_TIMEOUT` | `chat_service` | `30` | HTTP timeout for outbound webhook POST requests (seconds) |
 | `_STOP_WORDS` | `chat_service` | See FR-51 | Words excluded from webhook label / meeting name matching |

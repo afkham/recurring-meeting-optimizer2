@@ -27,13 +27,12 @@ Recurring Meeting Optimizer automatically cancels recurring Google Calendar meet
 The program is designed to run **every hour** via cron. Each time it runs it:
 
 1. Fetches all **recurring** Google Calendar events scheduled for **today** from your primary calendar.
-2. **On the first run of each day**, also checks tomorrow's recurring meetings and sends a day-before reminder to the matching Google Chat space for each one (see §X below).
-3. **Skips any event that starts more than 1 hour from now** — it will be re-evaluated on the next hourly run.
-4. For each event within the 1-hour window, looks for an attached Google Doc (added via Google Drive attachment on the event).
-5. Reads that doc and searches for a heading that starts with **today's date** (e.g. `Feb 26, 2026 | Team Sync`).
-6. Under that date heading, looks for a **Topic** or **Topics** section.
-7. **If topics are present** → the meeting is required → it is left untouched.
-8. **If no date heading, or topics are empty** → sends a **1-hour warning** to the matching Chat space, then cancels the occurrence and notifies all attendees by email with the note: *"Meeting canceled since there are no topics to be discussed today"*.
+2. Checks tomorrow's recurring meetings and sends a **day-before reminder** to the matching Google Chat space for each one — once per meeting per day (see §5 below).
+3. **Skips any event that starts more than 2 hours from now** — it will be re-evaluated on the next hourly run.
+4. For each event within the **2-hour warning window** (1–2 hours before start), looks up the agenda doc and checks for topics. **If no topics** → sends a ⚠️ warning to the Chat space: *"If topics not added within the next hour, the meeting will be cancelled"* — once per meeting per day.
+5. For each event within the **1-hour cancellation window** (less than 1 hour before start), re-checks topics.
+6. **If topics are present** → the meeting is left untouched.
+7. **If no topics** → cancels the occurrence, notifies all attendees by email, and sends a ❌ cancellation notification to the Chat space: *"Meeting cancelled because there were no topics"* — once per meeting per day.
 
 Events that are **not recurring**, or recurring events that have **no Google Doc attached**, are always skipped (never cancelled).
 
@@ -169,21 +168,22 @@ The program compares each config label to each meeting summary using **significa
 
 ### What messages are sent
 
-| Trigger | Message |
-|---|---|
-| First hourly run of the day (for tomorrow's meetings) — no topics yet | ⚠️ Reminder that the meeting is tomorrow and will be auto-cancelled if no topics are added |
-| First hourly run of the day (for tomorrow's meetings) — topics present | ✅ Confirmation that the meeting will go ahead |
-| 1-hour window reached — no topics found | ⚠️ Final warning that the meeting is about to be automatically cancelled |
+| Trigger | Message | Sent again? |
+|---|---|---|
+| Day-before check — no topics yet | ⚠️ "If topics not added by 1 hour before, the meeting will be cancelled" + doc link | No |
+| Day-before check — topics present | ✅ "Meeting will go ahead as scheduled" + doc link | No |
+| 1–2 hours before start — no topics | ⚠️ "If topics not added within the next hour, the meeting will be cancelled" + doc link | No |
+| Within 1 hour — no topics (after cancellation) | ❌ "Meeting has been automatically cancelled because there were no topics" + doc link | No |
 
-If no doc is attached, or the doc is unreadable, no day-before message is sent (safe side). The 1-hour warning is only sent when a cancellation is about to happen.
+If no doc is attached, or the doc is unreadable, no day-before message is sent (safe side).
 
 ### Disabling Chat reminders
 
 Simply delete or rename `chat_webhooks.json`. When the file is absent the program runs normally and silently skips all Chat notification steps.
 
-### State file
+### Deduplication state file
 
-`last_reminder_date.txt` is written after day-before reminders are sent each day, so they fire only once per day. This file is gitignored.
+`sent_reminders.json` tracks which notifications have already been sent, per meeting per day, so no message is ever sent twice to the same Chat space for the same meeting on the same day. Entries are automatically pruned after they are more than one day old. This file is gitignored.
 
 ---
 
@@ -306,7 +306,7 @@ Sample output (run at 08:00 — the 10:30 meeting is more than 1 hour away):
 2026-02-26 08:00:03 INFO  Found 3 recurring event(s) for 2026-02-26.
 2026-02-26 08:00:04 INFO  [DRY RUN] Would cancel 'SRE Leadership Sync' (reason: no_topics).
 2026-02-26 08:00:04 INFO  Keeping 'Weekly 1:1' (reason: has_topics).
-2026-02-26 08:00:04 INFO  Skipping 'Monthly All Hands' (starts at 2026-02-26T10:30:00+05:30 — more than 1 hour away).
+2026-02-26 08:00:04 INFO  Skipping 'Monthly All Hands' (starts at 2026-02-26T10:30:00+05:30 — more than 2 hours away).
 2026-02-26 08:00:04 INFO  recurring-meeting-optimizer finished.
 ```
 
