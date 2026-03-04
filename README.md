@@ -36,6 +36,24 @@ The program is designed to run **every hour** via cron. Each time it runs it:
 
 Events that are **not recurring**, or recurring events that have **no Google Doc attached**, are always skipped (never cancelled).
 
+### Notification timeline (example: meeting at 10:00 AM)
+
+```
+Day before                                   Meeting day
+──────────────────────────────────────────────────────────────────────────►
+     │                                   │              │              │
+  Evening                             08:00 AM       09:00 AM      10:00 AM
+  run (D-1)                           run              run          (start)
+     │                                   │              │
+     ▼                                   ▼              ▼
+⚠️ "No topics yet —              ⚠️ "Starts in ~2h —   ❌ Meeting cancelled
+   meeting will be                  add topics or it    + Chat notification
+   auto-cancelled if                will be cancelled   + attendees notified
+   none by 1h before"               in 1 hour"          by email
+```
+
+All three notifications are sent **at most once per meeting per day**, regardless of how many hourly runs occur within each window.
+
 ---
 
 ## 2. Prerequisites
@@ -168,14 +186,66 @@ The program compares each config label to each meeting summary using **significa
 
 ### What messages are sent
 
-| Trigger | Message | Sent again? |
-|---|---|---|
-| Day-before check — no topics yet | ⚠️ "If topics not added by 1 hour before, the meeting will be cancelled" + doc link | No |
-| Day-before check — topics present | ✅ "Meeting will go ahead as scheduled" + doc link | No |
-| 1–2 hours before start — no topics | ⚠️ "If topics not added within the next hour, the meeting will be cancelled" + doc link | No |
-| Within 1 hour — no topics (after cancellation) | ❌ "Meeting has been automatically cancelled because there were no topics" + doc link | No |
+There are four message types. Each is sent **at most once** per meeting per day.
 
-If no doc is attached, or the doc is unreadable, no day-before message is sent (safe side).
+#### Day-before — no topics yet (⚠️)
+
+Sent on the first hourly run of each day for tomorrow's recurring meetings when the agenda doc exists but has no topics:
+
+```
+⚠️ Reminder: SRE Leadership Sync is scheduled for tomorrow at 9:00 AM IST.
+
+No agenda topics have been added yet. Please add topics to the meeting doc.
+
+If no topics are added by 1 hour before the meeting, it will be automatically cancelled.
+
+Meeting doc: https://docs.google.com/document/d/.../edit
+```
+
+#### Day-before — topics already present (✅)
+
+Sent on the same run when topics have already been added for tomorrow's meeting:
+
+```
+✅ SRE Leadership Sync is scheduled for tomorrow at 9:00 AM IST.
+
+Agenda topics are already present — the meeting will go ahead as scheduled.
+
+Meeting doc: https://docs.google.com/document/d/.../edit
+```
+
+#### 2-hour warning — no topics (⚠️)
+
+Sent when the meeting is 1–2 hours away and the agenda is still empty. The meeting is **not yet cancelled** at this point — this is a final call to add topics:
+
+```
+⚠️ SRE Leadership Sync starts in about 2 hours.
+
+No agenda topics have been added yet. If topics are not added within the next hour, the meeting will be automatically cancelled.
+
+Meeting doc: https://docs.google.com/document/d/.../edit
+```
+
+#### Cancellation notification (❌)
+
+Sent after the meeting is automatically cancelled (within 1 hour of start, still no topics):
+
+```
+❌ SRE Leadership Sync has been automatically cancelled.
+
+The meeting was cancelled because there were no agenda topics.
+
+Meeting doc: https://docs.google.com/document/d/.../edit
+```
+
+> **Note:** If no doc is attached to the event, or the doc cannot be read, the day-before messages are suppressed (safe default — no false alarms). The 2-hour warning and cancellation notification only fire when the cancellation logic also fires.
+
+| Trigger | Message | Topics required? | Cancels? |
+|---|---|---|---|
+| Day-before run, no topics | ⚠️ warning + doc link | No | No |
+| Day-before run, topics present | ✅ confirmation + doc link | Yes | No |
+| 1–2 h before start, no topics | ⚠️ final warning + doc link | No | No |
+| Within 1 h, no topics | ❌ cancellation + doc link | No | **Yes** |
 
 ### Disabling Chat reminders
 
@@ -298,16 +368,42 @@ Use this to preview what the program would do without making any changes:
 python3 main.py --dry-run
 ```
 
-Sample output (run at 08:00 — the 10:30 meeting is more than 1 hour away):
+Sample output (run at 08:00 — the day-before reminders fire, the 10:30 meeting is outside the 2-hour window):
 ```
-2026-02-26 08:00:01 INFO  recurring-meeting-optimizer starting.
-2026-02-26 08:00:02 INFO  User timezone: Asia/Colombo
-2026-02-26 08:00:02 INFO  Checking meetings for: 2026-02-26
-2026-02-26 08:00:03 INFO  Found 3 recurring event(s) for 2026-02-26.
-2026-02-26 08:00:04 INFO  [DRY RUN] Would cancel 'SRE Leadership Sync' (reason: no_topics).
-2026-02-26 08:00:04 INFO  Keeping 'Weekly 1:1' (reason: has_topics).
-2026-02-26 08:00:04 INFO  Skipping 'Monthly All Hands' (starts at 2026-02-26T10:30:00+05:30 — more than 2 hours away).
-2026-02-26 08:00:04 INFO  recurring-meeting-optimizer finished.
+2026-02-26 08:00:01 INFO     recurring-meeting-optimizer starting.
+2026-02-26 08:00:01 INFO     User timezone: Asia/Colombo
+2026-02-26 08:00:02 INFO     Checking meetings for: 2026-02-26
+2026-02-26 08:00:02 INFO     Sending day-before reminders for: 2026-02-27
+2026-02-26 08:00:03 INFO     Found 2 recurring event(s) for 2026-02-27.
+2026-02-26 08:00:03 INFO     Matched webhook 'SRE Leadership' to meeting 'SRE Leadership Sync Up'.
+2026-02-26 08:00:03 INFO     [DRY RUN] Would send Chat message to SRE Leadership:
+                             ⚠️ Reminder: SRE Leadership Sync Up is scheduled for tomorrow at 9:00 AM IST.
+                             ...
+2026-02-26 08:00:04 INFO     Day-before reminder already sent for 'Weekly 1:1' — skipping.
+2026-02-26 08:00:04 INFO     Found 3 recurring event(s) for 2026-02-26.
+2026-02-26 08:00:04 INFO     Skipping 'Monthly All Hands' (starts at 2026-02-26T10:30:00+05:30 — more than 2 hours away).
+2026-02-26 08:00:05 INFO     [DRY RUN] Would cancel 'SRE Leadership Sync' (reason: no_topics).
+2026-02-26 08:00:05 INFO     Keeping 'Weekly 1:1' (reason: has_topics).
+2026-02-26 08:00:05 INFO     recurring-meeting-optimizer finished.
+```
+
+Sample output (run at 09:15 — inside the 2-hour warning window for a 10:00 AM meeting):
+```
+2026-02-26 09:15:01 INFO     recurring-meeting-optimizer starting.
+2026-02-26 09:15:02 INFO     Day-before reminders already sent today — skipping.
+2026-02-26 09:15:02 INFO     Found 1 recurring event(s) for 2026-02-26.
+2026-02-26 09:15:03 INFO     Matched webhook 'SRE Leadership' to meeting 'SRE Leadership Sync Up'.
+2026-02-26 09:15:03 INFO     [DRY RUN] Would send Chat message (2-hour warning) to SRE Leadership:
+                             ⚠️ SRE Leadership Sync Up starts in about 2 hours. ...
+2026-02-26 09:15:03 INFO     recurring-meeting-optimizer finished.
+```
+
+Sample output (live run at 09:05 — inside the 1-hour window, meeting is cancelled):
+```
+2026-02-26 09:05:01 INFO     recurring-meeting-optimizer starting.
+2026-02-26 09:05:02 INFO     Cancelling 'SRE Leadership Sync Up' (reason: no_topics).
+2026-02-26 09:05:03 INFO     Sent Chat cancellation notification to SRE Leadership.
+2026-02-26 09:05:03 INFO     recurring-meeting-optimizer finished.
 ```
 
 ### Live run (cancellations are sent)
@@ -316,7 +412,7 @@ Sample output (run at 08:00 — the 10:30 meeting is more than 1 hour away):
 python3 main.py
 ```
 
-Meetings with no topics are cancelled and all attendees receive a cancellation email.
+Meetings with no topics are cancelled and all attendees receive a cancellation email. If `chat_webhooks.json` is present, the matched Chat spaces also receive notifications.
 
 ---
 
@@ -465,3 +561,51 @@ The program only processes events that appear in your **primary** Google Calenda
 
 ### `file_cache` warning in logs
 This warning (`file_cache is only supported with oauth2client<4.0.0`) is cosmetic and comes from the Google API client library. It has no effect on functionality and can be safely ignored.
+
+### No Chat message is sent for a meeting
+
+Work through this checklist:
+
+1. **`chat_webhooks.json` exists** — if the file is absent, Chat reminders are silently disabled.
+2. **The label matches the meeting** — check the logs for `Matched webhook '...' to meeting '...'`. If you see `No webhook matched`, the label's significant words do not all appear in the meeting summary. Adjust the label (see the matching rules in §5).
+3. **The reminder was already sent today** — check `sent_reminders.json`. If an entry like `"2026-02-26|day_before|SRE Leadership Sync"` is already present the program correctly skips sending it again. To force a re-send, remove that entry from the file (or delete the whole file).
+4. **The meeting is more than 2 hours away** — day-of warnings only fire within the 2-hour window. Check the time and re-run closer to the meeting.
+5. **The webhook URL is invalid** — test it manually:
+   ```bash
+   curl -X POST -H 'Content-Type: application/json' \
+     -d '{"text": "test"}' \
+     'https://chat.googleapis.com/v1/spaces/.../messages?key=...'
+   ```
+   A `{"name": "spaces/.../messages/..."}` response confirms the URL is working.
+
+### Day-before reminder was not sent for a newly added webhook
+
+The day-before reminders fire once per day (on the first hourly run). If you add a new webhook to `chat_webhooks.json` after that run has already executed, today's day-before reminder will not be re-sent automatically. To trigger it for the new webhook:
+
+```bash
+# Remove the dedup entries for today and re-run
+python3 -c "
+import json, datetime
+today = datetime.date.today().isoformat()
+with open('sent_reminders.json') as f:
+    keys = json.load(f)
+kept = [k for k in keys if not k.startswith(today + '|day_before|')]
+with open('sent_reminders.json', 'w') as f:
+    json.dump(kept, f, indent=2)
+print('Removed today\\'s day-before entries. Re-run main.py to send reminders.')
+"
+python3 main.py
+```
+
+### Chat message sent at wrong time / duplicate messages
+
+The three notification stages are independent and deduped by key:
+- `YYYY-MM-DD|day_before|<summary>` — fires once on the first run of D-1
+- `YYYY-MM-DD|warn2h|<summary>` — fires once inside the 2-hour window
+- `YYYY-MM-DD|cancelled|<summary>` — fires once when the meeting is cancelled
+
+If you see duplicates, `sent_reminders.json` may have been manually cleared or corrupted. If you see a notification at the wrong stage, verify the system clock matches the meeting time zone shown in the logs (`User timezone: ...`).
+
+### Webhook returns 403 or 404
+
+The webhook URL has expired or the space has been deleted. Re-create the webhook in Google Chat (Space settings → Apps & integrations → Webhooks) and update `chat_webhooks.json` with the new URL.
