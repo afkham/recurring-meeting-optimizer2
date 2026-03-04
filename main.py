@@ -248,8 +248,8 @@ def main() -> None:
         # Load per-meeting dedup state once; persisted in finally block.
         sent_keys = _load_sent_reminders(today)
 
-        # Day-before reminders — skipped when --date override is active.
-        if webhooks and not args.date:
+        # Day-before reminders (once per meeting per day).
+        if webhooks:
             tomorrow = today + datetime.timedelta(days=1)
             try:
                 _send_day_before_reminders(
