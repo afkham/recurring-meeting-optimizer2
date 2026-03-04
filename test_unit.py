@@ -42,6 +42,7 @@ from googleapiclient.errors import HttpError
 import auth
 import calendar_service
 import canceller
+import chat_service as _cs
 import docs_service
 import main
 from canceller import CANCELLATION_NOTE
@@ -412,6 +413,70 @@ class TestCancellationWindow(unittest.TestCase):
         now = datetime.datetime(2026, 2, 26, 9, 0, 0, tzinfo=self._TZ)
         event = self._event('not-a-date')
         self.assertFalse(calendar_service.is_within_cancellation_window(event, now))
+
+
+# ---------------------------------------------------------------------------
+# UT-19 .. UT-25  chat_service.find_matching_space
+# ---------------------------------------------------------------------------
+
+class TestFindMatchingSpace(unittest.TestCase):
+    """Tests for the Chat space word-overlap matching algorithm."""
+
+    def _space(self, display_name: str) -> dict:
+        return {
+            'name': f"spaces/{display_name.replace(' ', '_')}",
+            'displayName': display_name,
+        }
+
+    def test_ut19_exact_match(self):
+        """UT-19: Space name words exactly present in meeting summary → matched."""
+        result = _cs.find_matching_space([self._space('Product Review')], 'Product Review')
+        self.assertIsNotNone(result)
+        self.assertEqual(result['displayName'], 'Product Review')
+
+    def test_ut20_space_words_subset_of_longer_summary(self):
+        """UT-20: All space words appear in a longer meeting summary → matched."""
+        result = _cs.find_matching_space(
+            [self._space('SRE Leadership')], 'SRE Leadership Sync Up',
+        )
+        self.assertIsNotNone(result)
+        self.assertEqual(result['displayName'], 'SRE Leadership')
+
+    def test_ut21_no_overlap_returns_none(self):
+        """UT-21: No significant word overlap between space and meeting → None."""
+        result = _cs.find_matching_space(
+            [self._space('Security Review')], 'Product Launch Planning',
+        )
+        self.assertIsNone(result)
+
+    def test_ut22_most_specific_space_wins(self):
+        """UT-22: Two matching spaces — the one with more significant words wins."""
+        spaces = [self._space('Product'), self._space('Product Review')]
+        result = _cs.find_matching_space(spaces, 'Weekly Product Review Session')
+        self.assertIsNotNone(result)
+        self.assertEqual(result['displayName'], 'Product Review')
+
+    def test_ut23_empty_display_name_skipped(self):
+        """UT-23: Space with empty displayName is silently ignored."""
+        spaces = [
+            {'name': 'spaces/X', 'displayName': ''},
+            self._space('Product Review'),
+        ]
+        result = _cs.find_matching_space(spaces, 'Product Review')
+        self.assertIsNotNone(result)
+        self.assertEqual(result['displayName'], 'Product Review')
+
+    def test_ut24_stop_words_only_name_no_match(self):
+        """UT-24: Space name collapses to zero significant words → no match."""
+        # 'the', 'meeting', 'team' are all in _STOP_WORDS
+        result = _cs.find_matching_space(
+            [self._space('The Meeting Team')], 'Product Review',
+        )
+        self.assertIsNone(result)
+
+    def test_ut25_empty_spaces_list_returns_none(self):
+        """UT-25: Empty spaces list → None, no crash."""
+        self.assertIsNone(_cs.find_matching_space([], 'Product Review'))
 
 
 # ---------------------------------------------------------------------------

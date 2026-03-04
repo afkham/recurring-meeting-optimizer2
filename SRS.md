@@ -255,6 +255,32 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 
 **FR-43** If all attached docs fail with access errors and none could be read, the system SHALL treat the result as `doc_error` and keep the meeting (safe side).
 
+### 4.11 Google Chat Reminders
+
+**FR-48** The system SHALL send a day-before reminder to the Google Chat space associated with each recurring meeting scheduled for tomorrow.
+
+**FR-49** The day-before reminder SHALL be sent only on the **first hourly run of each calendar day**. Subsequent runs on the same day SHALL skip the reminder step. The date of the last sent reminder SHALL be stored in `last_reminder_date.txt`.
+
+**FR-50** The system SHALL match a meeting to a Chat space using a **significant-word subset algorithm**: all significant words (non-stop-words, length > 1) in the space `displayName` must appear in the significant words of the meeting summary. If multiple spaces match, the one with the most significant words wins; ties broken alphabetically by `displayName`.
+
+**FR-51** The following words are treated as stop words and excluded from matching: `a`, `an`, `the`, `and`, `or`, `of`, `in`, `on`, `at`, `to`, `for`, `with`, `is`, `it`, `its`, `be`, `by`, `as`, `up`, plus domain-specific terms: `meeting`, `sync`, `weekly`, `daily`, `monthly`, `standup`, `stand`, `call`, `team`.
+
+**FR-52** If no Chat space matches a meeting, the reminder for that meeting SHALL be silently skipped (logged at INFO level).
+
+**FR-53** The day-before reminder message SHALL differ based on topic state at the time of the reminder:
+- **No topics yet**: warn that the meeting will be auto-cancelled 1 hour before start if no topics are added.
+- **Topics present**: confirm the meeting will go ahead.
+
+**FR-54** If the agenda doc is unreadable (`doc_error`) or no doc is attached (`no_doc`) at reminder time, no day-before message SHALL be sent for that meeting.
+
+**FR-55** When the hourly run enters a meeting's 1-hour cancellation window and determines the meeting should be cancelled (no topics), the system SHALL send a final **1-hour warning** to the matched Chat space before cancelling the occurrence.
+
+**FR-56** In dry-run mode, Chat messages SHALL be logged but NOT sent.
+
+**FR-57** Any Chat API failure (space listing, message sending) SHALL be caught and logged at WARNING level. The failure SHALL NOT abort the main cancellation flow.
+
+**FR-58** The Google Chat API must be enabled in the Google Cloud project, and the OAuth consent must cover the `chat.spaces.readonly` and `chat.messages.create` scopes. Existing users will be prompted to re-authenticate on their next run after this version is deployed (handled automatically by the existing token-scope validation logic).
+
 ---
 
 ## 5. Non-Functional Requirements
@@ -433,6 +459,9 @@ The following capabilities are **explicitly excluded** from this version:
 | `_MAX_URL_LENGTH` | `docs_service` | `2 048` | Maximum attachment fileUrl length (chars) |
 | `_MAX_DOC_ID_LENGTH` | `docs_service` | `128` | Maximum extracted doc ID length (chars) |
 | `CANCELLATION_NOTE` | `canceller` | See FR-25 | Text prepended to cancelled event descriptions |
+| `LAST_REMINDER_PATH` | `main` | `last_reminder_date.txt` | Tracks the date on which day-before reminders were last sent |
+| `_STOP_WORDS` | `chat_service` | See FR-51 | Words excluded from Chat space / meeting name matching |
+| `_MAX_SPACES_PAGES` | `chat_service` | `50` | Maximum pagination pages when listing Chat spaces |
 
 ### 9.2 End-Section Names
 

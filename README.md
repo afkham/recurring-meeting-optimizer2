@@ -10,14 +10,15 @@ Recurring Meeting Optimizer automatically cancels recurring Google Calendar meet
 2. [Prerequisites](#2-prerequisites)
 3. [Installation](#3-installation)
 4. [Configuring Google Cloud](#4-configuring-google-cloud)
-5. [Setting Up Your Meeting Docs](#5-setting-up-your-meeting-docs)
-6. [Attaching the Doc to a Calendar Event](#6-attaching-the-doc-to-a-calendar-event)
-7. [First Run and Authentication](#7-first-run-and-authentication)
-8. [Running the Program](#8-running-the-program)
-9. [Running the Tests](#9-running-the-tests)
-10. [Scheduling with Cron](#10-scheduling-with-cron)
-11. [Viewing Logs](#11-viewing-logs)
-12. [Troubleshooting](#12-troubleshooting)
+5. [Setting Up Google Chat Reminders](#5-setting-up-google-chat-reminders)
+6. [Setting Up Your Meeting Docs](#6-setting-up-your-meeting-docs)
+7. [Attaching the Doc to a Calendar Event](#7-attaching-the-doc-to-a-calendar-event)
+8. [First Run and Authentication](#8-first-run-and-authentication)
+9. [Running the Program](#9-running-the-program)
+10. [Running the Tests](#10-running-the-tests)
+11. [Scheduling with Cron](#11-scheduling-with-cron)
+12. [Viewing Logs](#12-viewing-logs)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -26,12 +27,13 @@ Recurring Meeting Optimizer automatically cancels recurring Google Calendar meet
 The program is designed to run **every hour** via cron. Each time it runs it:
 
 1. Fetches all **recurring** Google Calendar events scheduled for **today** from your primary calendar.
-2. **Skips any event that starts more than 1 hour from now** — it will be re-evaluated on the next hourly run.
-3. For each event within the 1-hour window, looks for an attached Google Doc (added via Google Drive attachment on the event).
-4. Reads that doc and searches for a heading that starts with **today's date** (e.g. `Feb 26, 2026 | Team Sync`).
-5. Under that date heading, looks for a **Topic** or **Topics** section.
-6. **If topics are present** → the meeting is required → it is left untouched.
-7. **If no date heading, or topics are empty** → the meeting is not required → the occurrence is cancelled and all attendees receive a cancellation email with the note: *"Meeting canceled since there are no topics to be discussed today"*.
+2. **On the first run of each day**, also checks tomorrow's recurring meetings and sends a day-before reminder to the matching Google Chat space for each one (see §X below).
+3. **Skips any event that starts more than 1 hour from now** — it will be re-evaluated on the next hourly run.
+4. For each event within the 1-hour window, looks for an attached Google Doc (added via Google Drive attachment on the event).
+5. Reads that doc and searches for a heading that starts with **today's date** (e.g. `Feb 26, 2026 | Team Sync`).
+6. Under that date heading, looks for a **Topic** or **Topics** section.
+7. **If topics are present** → the meeting is required → it is left untouched.
+8. **If no date heading, or topics are empty** → sends a **1-hour warning** to the matching Chat space, then cancels the occurrence and notifies all attendees by email with the note: *"Meeting canceled since there are no topics to be discussed today"*.
 
 Events that are **not recurring**, or recurring events that have **no Google Doc attached**, are always skipped (never cancelled).
 
@@ -118,7 +120,55 @@ mv ~/Downloads/client_secret_*.json /path/to/recurring-meeting-optimizer2/creden
 
 ---
 
-## 5. Setting Up Your Meeting Docs
+## 5. Setting Up Google Chat Reminders
+
+The program can send reminders to a Google Chat space when a meeting is coming up. This section explains how to enable it and how the space is matched to the meeting.
+
+### Enable the Chat API
+
+1. In your Google Cloud project go to **APIs & Services → Library**.
+2. Search for **Google Chat API** and click **ENABLE**.
+
+### Re-authentication
+
+After enabling the Chat API and updating the code, the program will detect that its stored OAuth token is missing the new Chat scopes and will automatically open the browser for a one-time re-consent. No manual token deletion is needed.
+
+### How spaces are matched to meetings
+
+The program lists all Chat spaces you are a member of and finds the best match for each meeting using **significant-word overlap**:
+
+- Common filler words (`the`, `and`, `for`, `meeting`, `sync`, `weekly`, etc.) are ignored.
+- All remaining words in the **space name** must appear in the **meeting summary**.
+- If multiple spaces match, the one with the most words (most specific) wins.
+
+**Example:**
+
+| Meeting summary | Space name | Match? |
+|---|---|---|
+| `SRE Leadership Sync Up` | `SRE Leadership` | ✅ both words present |
+| `SRE Leadership Sync Up` | `SRE` | ✅ but weaker — loses to `SRE Leadership` |
+| `Product Review` | `Security Review` | ❌ `Security` not in meeting |
+
+**Tip:** Name your Chat spaces to reflect the significant words in the meeting title. For example, name the space `SRE Leadership` (not `SRE Leadership Meeting`) because `meeting` is a stop word and adds no discriminating value.
+
+### What messages are sent
+
+| Trigger | Message |
+|---|---|
+| First hourly run of the day (for tomorrow's meetings) — no topics yet | ⚠️ Reminder that the meeting is tomorrow and will be auto-cancelled if no topics are added |
+| First hourly run of the day (for tomorrow's meetings) — topics present | ✅ Confirmation that the meeting will go ahead |
+| 1-hour window reached — no topics found | ⚠️ Final warning that the meeting is about to be automatically cancelled |
+
+If no doc is attached, or the doc is unreadable, no day-before message is sent (safe side). The 1-hour warning is only sent when a cancellation is about to happen.
+
+### State file
+
+`last_reminder_date.txt` is written after day-before reminders are sent each day, so they fire only once per day. This file is gitignored.
+
+---
+
+## 6. Setting Up Your Meeting Docs
+
 
 Each recurring meeting must have a single Google Doc used as its running agenda. The program looks for a specific structure in this doc.
 
@@ -185,7 +235,7 @@ Action items
 
 ---
 
-## 6. Attaching the Doc to a Calendar Event
+## 7. Attaching the Doc to a Calendar Event
 
 The program finds the meeting notes doc via the **Google Drive attachment** on the calendar event. You only need to do this once per recurring meeting — the attachment carries forward to all future occurrences.
 
@@ -199,7 +249,7 @@ The program finds the meeting notes doc via the **Google Drive attachment** on t
 
 ---
 
-## 7. First Run and Authentication
+## 8. First Run and Authentication
 
 The first time you run the program it will open your browser for a one-time Google sign-in:
 
@@ -218,7 +268,7 @@ A `token.json` file is saved in the project directory. All future runs use this 
 
 ---
 
-## 8. Running the Program
+## 9. Running the Program
 
 ### Dry run (safe — no meetings are cancelled)
 
@@ -250,7 +300,7 @@ Meetings with no topics are cancelled and all attendees receive a cancellation e
 
 ---
 
-## 9. Running the Tests
+## 10. Running the Tests
 
 The integration test suite creates real temporary calendar events and Google Docs, runs the optimizer against them, verifies the results, then cleans everything up.
 
@@ -307,7 +357,7 @@ Waiting 5 s for Calendar API propagation...
 
 ---
 
-## 10. Scheduling with Cron
+## 11. Scheduling with Cron
 
 The program must run **every hour** so that each meeting is evaluated on the run that falls within its 1-hour window. A single daily invocation will only check meetings that happen to start within 1 hour of that fixed time — all other meetings on that day will be silently skipped.
 
@@ -346,7 +396,7 @@ crontab -l
 
 ---
 
-## 11. Viewing Logs
+## 12. Viewing Logs
 
 The program writes logs to both the terminal and `optimizer.log` in the project directory.
 
@@ -366,10 +416,10 @@ Log levels:
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### `credentials.json not found`
-Download the OAuth 2.0 client secret from Google Cloud Console (**APIs & Services → Credentials**) and save it as `credentials.json` in the project root. See [Section 4](#4-configuring-google-cloud).
+Download the OAuth 2.0 client secret from Google Cloud Console (**APIs & Services → Credentials**) and save it as `credentials.json` in the project root. See [Section 4](#4-configuring-google-cloud) and [Section 5](#5-setting-up-google-chat-reminders).
 
 ### Browser does not open on first run
 Ensure you are running the program in an environment with a graphical browser. If running over SSH, copy the URL printed in the terminal and open it in a local browser. Complete the auth flow and paste the resulting code back into the terminal.
@@ -388,7 +438,7 @@ Check the Google Doc structure:
 - At least one **non-empty line** must appear between `Topic:` and the next section (`Notes`, `Action items`, etc.).
 
 ### Meeting is not cancelled even though topics are empty
-Verify the Google Doc is properly **attached** to the calendar event (not just linked in the description). See [Section 6](#6-attaching-the-doc-to-a-calendar-event).
+Verify the Google Doc is properly **attached** to the calendar event (not just linked in the description). See [Section 7](#7-attaching-the-doc-to-a-calendar-event).
 
 ### Recurring meeting not detected
 The program only processes events that appear in your **primary** Google Calendar and have the `recurringEventId` field set by the Calendar API. Ensure the event is a proper recurring series (not just a manually repeated one-off event).

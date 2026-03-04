@@ -3,6 +3,7 @@ token.json
 test_token.json
 optimizer.log
 last_success.txt
+last_reminder_date.txt
 __pycache__/
 *.pyc
 .swp

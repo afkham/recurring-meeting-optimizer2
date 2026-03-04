@@ -39,6 +39,9 @@ SCOPES = [
     'https://www.googleapis.com/auth/documents.readonly',
     # drive.readonly is needed to resolve attachment file metadata.
     'https://www.googleapis.com/auth/drive.readonly',
+    # Chat: list spaces the user is a member of, and send messages.
+    'https://www.googleapis.com/auth/chat.spaces.readonly',
+    'https://www.googleapis.com/auth/chat.messages.create',
 ]
 
 CREDENTIALS_PATH = 'credentials.json'
@@ -157,3 +160,9 @@ def build_services(creds: Credentials):
     docs_svc     = build('docs',     'v1', http=_authorized_http())
     drive_svc    = build('drive',    'v3', http=_authorized_http())
     return calendar_svc, docs_svc, drive_svc
+
+
+def build_chat_service(creds: Credentials):
+    """Build and return an authenticated Chat API v1 service."""
+    authorized_http = AuthorizedHttp(creds, http=httplib2.Http(timeout=_API_TIMEOUT_SECONDS))
+    return build('chat', 'v1', http=authorized_http, cache_discovery=False)
