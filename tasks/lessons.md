@@ -1,12 +1,14 @@
 # Lessons Learned
 
-## L-01 — Always update SRS and user guide alongside code changes
+## L-01 — Always update SRS, README, and lessons.md alongside code changes
 
-**Mistake:** Implemented the 1-hour cancellation window feature (code + tests + commit + push) without updating `SRS.md` or `README.md`. The user had to prompt for the doc update separately.
+**Mistakes:**
+1. Implemented the 1-hour cancellation window (code + tests + commit) without updating `SRS.md` or `README.md`. User had to prompt separately.
+2. Implemented the Google Chat reminder feature and correctly updated `SRS.md` and `README.md` in the same commit — but forgot to update `tasks/lessons.md`. User had to prompt again.
 
-**Rule:** After every non-trivial code change, ask: *"Does this change the behaviour visible to a user or operator? Does it add, remove, or alter any requirement, constant, or operational procedure?"* If yes, update the relevant docs in the same commit (or immediately after) — never defer to a follow-up.
+**Rule:** Before every commit, run through the full checklist below. All three doc files are mandatory on every non-trivial feature, not optional. "I'll do it after" always means "the user will have to ask."
 
 **Checklist before committing a feature:**
 - [ ] `SRS.md` — new/changed FRs, NFRs, constants, decision logic
 - [ ] `README.md` — how it works, sample output, scheduling, troubleshooting
-- [ ] `tasks/lessons.md` — any new lesson from this session
+- [ ] `tasks/lessons.md` — add or reinforce any lesson from this session
