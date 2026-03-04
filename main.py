@@ -193,14 +193,11 @@ def main() -> None:
     parser.add_argument(
         '--date',
         metavar='YYYY-MM-DD',
-        help='Override the date to check (e.g. 2026-02-24). '
+        help='Date to run for (YYYY-MM-DD). Defaults to today. '
              'All meetings on that date are evaluated regardless of time windows. '
-             'Day-before reminders are skipped. Implies --dry-run.',
+             'Combine with --dry-run to preview without making changes.',
     )
     args = parser.parse_args()
-
-    if args.date:
-        args.dry_run = True  # past-date runs are always non-destructive
 
     if args.dry_run:
         logger.info("=== DRY RUN MODE — no meetings will be cancelled ===")
@@ -238,7 +235,7 @@ def main() -> None:
             now = datetime.datetime.combine(
                 today, datetime.time(23, 59, 59), tzinfo=tz_info
             )
-            logger.info("Date override: checking meetings for %s (all windows open).", today)
+            logger.info("Date override active: running for %s.", today)
         else:
             now   = datetime.datetime.now(tz_info)
             today = now.date()
