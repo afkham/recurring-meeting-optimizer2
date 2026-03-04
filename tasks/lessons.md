@@ -33,6 +33,14 @@
 
 ---
 
+## L-05 — A date-override flag is not the same as dry-run
+
+**Mistake:** When adding `--date`, assumed running for a past date should imply `--dry-run`. The flag was meant to specify *which date to run for* (the same way a cron job passes today's date), not to preview changes.
+
+**Rule:** A date-input flag (`--date`) controls *what* the program operates on. A mode flag (`--dry-run`) controls *how* it operates. Never conflate the two. If a flag is a parameter, not a mode switch, do not silently change behaviour based on its value.
+
+---
+
 ## L-04 — Dry-run mode must not mutate persistent dedup state
 
 **Mistake:** The initial all-or-nothing guard (`last_reminder_date.txt`) was written even in `--dry-run` mode. This meant running `--dry-run` to preview messages would silently prevent the subsequent live run from sending anything.
