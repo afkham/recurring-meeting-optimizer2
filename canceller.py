@@ -23,16 +23,10 @@ import docs_service
 
 logger = logging.getLogger(__name__)
 
-CANCELLATION_NOTE = "Meeting canceled since there are no topics to be discussed today"
+CANCELLATION_NOTE = "Meeting cancelled since there are no topics to be discussed today"
 
 
-def _safe_summary(event: dict) -> str:
-    """Return a sanitised event summary safe to write to logs."""
-    raw = event.get('summary', 'Untitled')
-    return repr(raw[:80])
-
-
-def should_cancel_event(event: dict, docs_svc, today: datetime.date) -> tuple:
+def should_cancel_event(event: dict, docs_svc, today: datetime.date) -> tuple[bool, str]:
     """
     Determine whether a recurring event occurrence should be cancelled.
 
@@ -42,7 +36,7 @@ def should_cancel_event(event: dict, docs_svc, today: datetime.date) -> tuple:
       'no_topics'   - doc(s) found but none have topics for today (DO cancel)
       'doc_error'   - all docs had access errors (do NOT cancel, to be safe)
     """
-    summary = _safe_summary(event)
+    summary = calendar_service.safe_summary(event)
     doc_ids = docs_service.extract_doc_ids_from_event(event)
 
     if not doc_ids:
@@ -80,7 +74,7 @@ def should_cancel_event(event: dict, docs_svc, today: datetime.date) -> tuple:
 
 def process_event(event: dict, calendar_svc, docs_svc, today: datetime.date, dry_run: bool = False) -> None:
     """Evaluate one recurring event and cancel it if no topics are found."""
-    summary = _safe_summary(event)
+    summary = calendar_service.safe_summary(event)
     cancel, reason = should_cancel_event(event, docs_svc, today)
 
     if cancel:

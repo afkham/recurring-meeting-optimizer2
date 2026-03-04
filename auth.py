@@ -145,17 +145,18 @@ def get_credentials() -> Credentials:
 
 
 def build_services(creds: Credentials):
-    """Build and return (calendar_service, docs_service, drive_service).
+    """Build and return (calendar_service, docs_service).
 
     Each service uses an AuthorizedHttp transport with a timeout so that
     hung API calls do not block indefinitely.
+
+    Note: the drive.readonly OAuth scope is requested so the Calendar API
+    returns attachment metadata, but the Drive service itself is never called
+    in the production path.
     """
     def _authorized_http() -> AuthorizedHttp:
         return AuthorizedHttp(creds, http=httplib2.Http(timeout=_API_TIMEOUT_SECONDS))
 
     calendar_svc = build('calendar', 'v3', http=_authorized_http())
     docs_svc     = build('docs',     'v1', http=_authorized_http())
-    drive_svc    = build('drive',    'v3', http=_authorized_http())
-    return calendar_svc, docs_svc, drive_svc
-
-
+    return calendar_svc, docs_svc

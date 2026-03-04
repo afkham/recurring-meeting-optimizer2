@@ -18,11 +18,11 @@ Unit tests for recurring-meeting-optimizer.
 No Google credentials required — all Google API calls are mocked.
 
 Test groups:
-  UT-01..04  has_topics_for_today() — pure doc-parsing logic
-  UT-05..07  canceller.should_cancel_event() — error handling paths
-  UT-08..09  calendar_service.cancel_event_occurrence() — partial-failure & idempotency
-  UT-10..11  docs_service.extract_doc_ids_from_event() — URL validation
-  UT-12      auth.get_credentials() — corrupt token recovery
+  UT-01..04, UT-13  has_topics_for_today() — pure doc-parsing logic
+  UT-05..07         canceller.should_cancel_event() — error handling paths
+  UT-08..09         calendar_service.cancel_event_occurrence() — partial-failure & idempotency
+  UT-10..11         docs_service.extract_doc_ids_from_event() — URL validation
+  UT-12             auth.get_credentials() — corrupt token recovery
 
 Usage:
   python test_unit.py
@@ -34,7 +34,7 @@ import json
 import os
 import tempfile
 import unittest
-from unittest.mock import MagicMock, patch, call, mock_open
+from unittest.mock import MagicMock, patch
 
 import httplib2
 from googleapiclient.errors import HttpError
@@ -44,7 +44,6 @@ import calendar_service
 import canceller
 import chat_service as _cs
 import docs_service
-import main
 from canceller import CANCELLATION_NOTE
 
 
@@ -119,6 +118,20 @@ class TestHasTopicsForToday(unittest.TestCase):
         ]
         self.assertFalse(self._call(content))
 
+    def test_ut04_topic_variants_all_recognised(self):
+        """UT-04: 'Topic', 'Topic:', 'Topics', 'Topics:', 'TOPICS:' all match."""
+        variants = ['Topic', 'Topic:', 'Topics', 'Topics:', 'TOPICS:']
+        for variant in variants:
+            with self.subTest(variant=variant):
+                content = [
+                    SECTION_BREAK,
+                    _heading(DATE_HEADING),
+                    _para(variant),
+                    _para('- An agenda item'),
+                    _para('Notes'),
+                ]
+                self.assertTrue(self._call(content), f"'{variant}' should be recognised as Topics header")
+
     def test_ut13_date_heading_found_no_topics_section_cancels(self):
         """UT-13: Today's date heading present but NO Topics section at all → False (cancel)."""
         content = [
@@ -138,20 +151,6 @@ class TestHasTopicsForToday(unittest.TestCase):
             any('no Topics section' in msg for msg in log_ctx.output),
             "Expected an INFO log mentioning 'no Topics section'",
         )
-
-    def test_ut04_topic_variants_all_recognised(self):
-        """UT-04: 'Topic', 'Topic:', 'Topics', 'Topics:', 'TOPICS:' all match."""
-        variants = ['Topic', 'Topic:', 'Topics', 'Topics:', 'TOPICS:']
-        for variant in variants:
-            with self.subTest(variant=variant):
-                content = [
-                    SECTION_BREAK,
-                    _heading(DATE_HEADING),
-                    _para(variant),
-                    _para('- An agenda item'),
-                    _para('Notes'),
-                ]
-                self.assertTrue(self._call(content), f"'{variant}' should be recognised as Topics header")
 
 
 # ---------------------------------------------------------------------------

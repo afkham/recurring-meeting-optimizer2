@@ -38,7 +38,7 @@ _CANCELLATION_WINDOW = datetime.timedelta(hours=1)
 _WARNING_WINDOW = datetime.timedelta(hours=2)
 
 
-def _safe_summary(event: dict) -> str:
+def safe_summary(event: dict) -> str:
     """Return a sanitised event summary safe to write to logs."""
     raw = event.get('summary', 'Untitled')
     return repr(raw[:80])
@@ -155,7 +155,7 @@ def is_within_warning_window(event: dict, now: datetime.datetime) -> bool:
 def cancel_event_occurrence(calendar_svc, event: dict, note: str) -> None:
     """Prepend cancellation note to event description, then delete the occurrence for all attendees."""
     event_id = event['id']
-    summary  = _safe_summary(event)
+    summary  = safe_summary(event)
 
     existing_desc = event.get('description', '') or ''
 

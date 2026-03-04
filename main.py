@@ -89,13 +89,6 @@ def _doc_url(event: dict) -> str | None:
     return f'https://docs.google.com/document/d/{doc_ids[0]}/edit'
 
 
-def _safe_summary(event: dict) -> str:
-    """Return a sanitised event summary safe to write to logs."""
-    raw = event.get('summary', 'Untitled')
-    # Truncate to 80 chars and use repr() to neutralise any embedded newlines
-    # or control characters that could enable log injection.
-    return repr(raw[:80])
-
 
 def _load_sent_reminders(today: datetime.date) -> set[str]:
     """Load per-meeting sent-reminder keys, dropping entries older than yesterday."""
@@ -209,7 +202,7 @@ def main() -> None:
 
     try:
         creds = auth.get_credentials()
-        calendar_svc, docs_svc, _ = auth.build_services(creds)
+        calendar_svc, docs_svc = auth.build_services(creds)
 
         # Load webhook config — empty dict means Chat reminders are disabled.
         webhooks = chat_service.load_webhooks()
@@ -256,7 +249,7 @@ def main() -> None:
                         start_str = event.get('start', {}).get('dateTime', '')
                         logger.info(
                             "Skipping %s (starts at %s — more than 2 hours away).",
-                            _safe_summary(event), start_str,
+                            calendar_service.safe_summary(event), start_str,
                         )
                         continue
 
@@ -285,7 +278,7 @@ def main() -> None:
                             except Exception:
                                 logger.warning(
                                     "2-hour Chat warning failed for %s — continuing.",
-                                    _safe_summary(event), exc_info=True,
+                                    calendar_service.safe_summary(event), exc_info=True,
                                 )
                         continue  # do not cancel yet
 
@@ -320,13 +313,13 @@ def main() -> None:
                         except Exception:
                             logger.warning(
                                 "Cancellation Chat notification failed for %s — continuing.",
-                                _safe_summary(event), exc_info=True,
+                                calendar_service.safe_summary(event), exc_info=True,
                             )
 
                 except Exception:
                     logger.exception(
                         "Error processing event %s — skipping and continuing.",
-                        _safe_summary(event),
+                        calendar_service.safe_summary(event),
                     )
 
     except FileNotFoundError as exc:
