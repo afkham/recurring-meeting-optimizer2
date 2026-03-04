@@ -2,8 +2,6 @@ credentials.json
 token.json
 test_token.json
 optimizer.log
-last_success.txt
-last_reminder_date.txt
 sent_reminders.json
 chat_webhooks.json
 __pycache__/
