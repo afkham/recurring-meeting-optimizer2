@@ -151,7 +151,7 @@ def _send_day_before_reminders(
             if webhook_url is None:
                 continue
 
-            reminder_key = f"{tomorrow}|{summary_raw}"
+            reminder_key = f"{tomorrow}|day_before|{summary_raw}"
             if reminder_key in sent_keys:
                 logger.info(
                     "Day-before reminder already sent for %r — skipping.",
@@ -268,7 +268,7 @@ def main() -> None:
                                     event, docs_svc, today
                                 )
                                 if should_cancel:
-                                    warn_key = f"warn2h|{today}|{summary}"
+                                    warn_key = f"{today}|warn2h|{summary}"
                                     if warn_key not in sent_keys:
                                         webhook_url = chat_service.find_webhook(
                                             webhooks, summary
@@ -305,7 +305,7 @@ def main() -> None:
 
                     if peek_cancel and webhooks:
                         try:
-                            cancelled_key = f"cancelled|{today}|{summary}"
+                            cancelled_key = f"{today}|cancelled|{summary}"
                             if cancelled_key not in sent_keys:
                                 webhook_url = chat_service.find_webhook(webhooks, summary)
                                 if webhook_url is not None:
