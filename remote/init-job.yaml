@@ -1,0 +1,38 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: optimizer-init
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: init
+        image: busybox
+        command:
+        - sh
+        - -c
+        - |
+          if [ ! -f /state/token.json ]; then
+            cp /secrets/initial-token.json /state/token.json
+            echo "Copied token.json to PVC."
+          else
+            echo "token.json already exists — skipping."
+          fi
+          if [ ! -f /state/sent_reminders.json ]; then
+            echo "[]" > /state/sent_reminders.json
+            echo "Created empty sent_reminders.json."
+          fi
+        volumeMounts:
+        - name: secrets
+          mountPath: /secrets
+          readOnly: true
+        - name: state
+          mountPath: /state
+      volumes:
+      - name: secrets
+        secret:
+          secretName: optimizer-secrets
+      - name: state
+        persistentVolumeClaim:
+          claimName: optimizer-state

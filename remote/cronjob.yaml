@@ -1,0 +1,43 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: meeting-optimizer
+spec:
+  schedule: "0 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: optimizer
+            image: your-registry/meeting-optimizer:latest
+            command:
+            - sh
+            - -c
+            - python3 /app/main.py --date "$(date +%Y-%m-%dT%H:%M)"
+            volumeMounts:
+            - name: secrets
+              mountPath: /app/credentials.json
+              subPath: credentials.json
+              readOnly: true
+            - name: secrets
+              mountPath: /app/chat_webhooks.json
+              subPath: chat_webhooks.json
+              readOnly: true
+            - name: state
+              mountPath: /app/token.json
+              subPath: token.json
+            - name: state
+              mountPath: /app/sent_reminders.json
+              subPath: sent_reminders.json
+          volumes:
+          - name: secrets
+            secret:
+              secretName: optimizer-secrets
+          - name: state
+            persistentVolumeClaim:
+              claimName: optimizer-state
