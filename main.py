@@ -118,16 +118,21 @@ def _send_day_before_reminders(
     calendar_svc,
     docs_svc,
     today: datetime.date,
-    tomorrow: datetime.date,
+    target_date: datetime.date,
     tz_string: str,
     sent_keys: set[str],
     dry_run: bool,
+    day_label: str = "tomorrow",
+    reminder_type: str = "day_before",
 ) -> None:
-    """Send day-before Chat webhook reminders for all of tomorrow's recurring meetings.
+    """Send day-before Chat webhook reminders for all of *target_date*'s recurring meetings.
 
     *sent_keys* is updated in-place for each successfully sent reminder so that
     re-runs never send the same message twice.  In dry-run mode the set is not
     updated (so a subsequent live run will still send).
+
+    *day_label* controls the wording in the message (e.g. "tomorrow", "on Monday").
+    *reminder_type* is embedded in the dedup key to distinguish reminder categories.
     """
     logger = logging.getLogger(__name__)
     try:
@@ -135,8 +140,8 @@ def _send_day_before_reminders(
     except ZoneInfoNotFoundError:
         tz_info = ZoneInfo('UTC')
 
-    logger.info("Sending day-before reminders for: %s", tomorrow)
-    events = calendar_service.get_todays_recurring_events(calendar_svc, tomorrow, tz_string)
+    logger.info("Sending %s reminders for: %s", reminder_type, target_date)
+    events = calendar_service.get_todays_recurring_events(calendar_svc, target_date, tz_string)
 
     for event in events:
         summary_raw = event.get('summary', 'Untitled')
@@ -145,29 +150,33 @@ def _send_day_before_reminders(
             if webhook_url is None:
                 continue
 
-            reminder_key = f"{today}|day_before|{summary_raw}"
+            reminder_key = f"{today}|{reminder_type}|{summary_raw}"
             if reminder_key in sent_keys:
                 logger.info(
-                    "Day-before reminder already sent for %r — skipping.",
-                    summary_raw[:60],
+                    "%s reminder already sent for %r — skipping.",
+                    reminder_type, summary_raw[:60],
                 )
                 continue
 
-            should_cancel, reason = canceller.should_cancel_event(event, docs_svc, tomorrow)
+            should_cancel, reason = canceller.should_cancel_event(event, docs_svc, target_date)
 
             if reason in ('no_doc', 'doc_error'):
                 logger.info(
-                    "Day-before: skipping Chat message for %r (reason: %s).",
-                    summary_raw[:60], reason,
+                    "%s: skipping Chat message for %r (reason: %s).",
+                    reminder_type, summary_raw[:60], reason,
                 )
                 continue
 
             time_str = chat_service.format_event_time(event, tz_info)
             url = _doc_url(event)
             if should_cancel:
-                text = chat_service.build_day_before_no_topics_message(summary_raw, time_str, url)
+                text = chat_service.build_day_before_no_topics_message(
+                    summary_raw, time_str, url, day_label=day_label
+                )
             else:
-                text = chat_service.build_day_before_has_topics_message(summary_raw, time_str, url)
+                text = chat_service.build_day_before_has_topics_message(
+                    summary_raw, time_str, url, day_label=day_label
+                )
 
             chat_service.send_webhook_message(webhook_url, text, dry_run=dry_run)
 
@@ -176,8 +185,8 @@ def _send_day_before_reminders(
 
         except Exception:
             logger.warning(
-                "Day-before Chat reminder failed for %r — continuing.",
-                summary_raw[:60], exc_info=True,
+                "%s Chat reminder failed for %r — continuing.",
+                reminder_type, summary_raw[:60], exc_info=True,
             )
 
 
@@ -265,6 +274,21 @@ def main() -> None:
                 )
             except Exception:
                 logger.warning("Day-before reminder step failed.", exc_info=True)
+
+            # Friday→Monday reminders: warn on Friday about Monday meetings so people
+            # don't miss reminders over the weekend.
+            if today.weekday() == 4:  # 4 = Friday
+                next_monday = today + datetime.timedelta(days=3)
+                try:
+                    _send_day_before_reminders(
+                        webhooks, calendar_svc, docs_svc,
+                        today, next_monday, tz_string, sent_keys,
+                        dry_run=args.dry_run,
+                        day_label="on Monday",
+                        reminder_type="monday_reminder",
+                    )
+                except Exception:
+                    logger.warning("Friday→Monday reminder step failed.", exc_info=True)
 
         events = calendar_service.get_todays_recurring_events(calendar_svc, today, tz_string)
 

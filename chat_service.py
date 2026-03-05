@@ -134,11 +134,12 @@ def format_event_time(event: dict, tz_info) -> str:
 
 
 def build_day_before_no_topics_message(
-    meeting_name: str, time_str: str, doc_url: str | None = None
+    meeting_name: str, time_str: str, doc_url: str | None = None,
+    day_label: str = "tomorrow",
 ) -> str:
     """Message sent the day before when no topics have been added yet."""
     text = (
-        f"\u26a0\ufe0f Reminder: {meeting_name} is scheduled for tomorrow at {time_str}.\n\n"
+        f"\u26a0\ufe0f Reminder: {meeting_name} is scheduled for {day_label} at {time_str}.\n\n"
         "No agenda topics have been added yet. Please add topics to the meeting doc.\n\n"
         "If no topics are added by 1 hour before the meeting, "
         "it will be automatically cancelled."
@@ -149,11 +150,12 @@ def build_day_before_no_topics_message(
 
 
 def build_day_before_has_topics_message(
-    meeting_name: str, time_str: str, doc_url: str | None = None
+    meeting_name: str, time_str: str, doc_url: str | None = None,
+    day_label: str = "tomorrow",
 ) -> str:
     """Message sent the day before when topics are already present."""
     text = (
-        f"\u2705 {meeting_name} is scheduled for tomorrow at {time_str}.\n\n"
+        f"\u2705 {meeting_name} is scheduled for {day_label} at {time_str}.\n\n"
         "Agenda topics are already present \u2014 the meeting will go ahead as scheduled."
     )
     if doc_url:
