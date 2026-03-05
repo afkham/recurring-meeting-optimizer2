@@ -139,10 +139,8 @@ def build_day_before_no_topics_message(
 ) -> str:
     """Message sent the day before when no topics have been added yet."""
     text = (
-        f"\u26a0\ufe0f Reminder: {meeting_name} is scheduled for {day_label} at {time_str}.\n\n"
-        "No agenda topics have been added yet. Please add topics to the meeting doc.\n\n"
-        "If no topics are added by 1 hour before the meeting, "
-        "it will be automatically cancelled."
+        f"\u26a0\ufe0f {meeting_name} is scheduled for {day_label} at {time_str} but has no agenda topics yet.\n\n"
+        "Please add topics at least 1 hour before the meeting, or it will be automatically cancelled."
     )
     if doc_url:
         text += f"\n\nMeeting doc: {doc_url}"
@@ -155,8 +153,7 @@ def build_day_before_has_topics_message(
 ) -> str:
     """Message sent the day before when topics are already present."""
     text = (
-        f"\u2705 {meeting_name} is scheduled for {day_label} at {time_str}.\n\n"
-        "Agenda topics are already present \u2014 the meeting will go ahead as scheduled."
+        f"\u2705 {meeting_name} is scheduled for {day_label} at {time_str} and has agenda topics \u2014 it's all set."
     )
     if doc_url:
         text += f"\n\nMeeting doc: {doc_url}"
@@ -166,9 +163,8 @@ def build_day_before_has_topics_message(
 def build_two_hour_warning_message(meeting_name: str, doc_url: str | None = None) -> str:
     """Message sent ~2 hours before the meeting when no topics are present."""
     text = (
-        f"\u26a0\ufe0f {meeting_name} starts in about 2 hours.\n\n"
-        "No agenda topics have been added yet. "
-        "If topics are not added within the next hour, the meeting will be automatically cancelled."
+        f"\u26a0\ufe0f {meeting_name} starts in about 2 hours and has no agenda topics.\n\n"
+        "Add topics within the next hour or the meeting will be automatically cancelled."
     )
     if doc_url:
         text += f"\n\nMeeting doc: {doc_url}"
@@ -180,8 +176,7 @@ def build_cancellation_notification_message(
 ) -> str:
     """Message sent after the meeting has been automatically cancelled."""
     text = (
-        f"\u274c {meeting_name} has been automatically cancelled.\n\n"
-        "The meeting was cancelled because there were no agenda topics."
+        f"\u274c {meeting_name} has been automatically cancelled \u2014 no agenda topics were found."
     )
     if doc_url:
         text += f"\n\nMeeting doc: {doc_url}"
