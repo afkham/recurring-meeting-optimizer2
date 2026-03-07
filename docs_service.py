@@ -155,7 +155,7 @@ def _heading_level(paragraph: dict) -> int:
     return _HEADING_LEVELS.get(style, 99)
 
 
-def has_topics_for_today(content: list, today: datetime.date) -> bool:
+def has_topics_for_today(content: list, today: datetime.date) -> tuple[bool, list[str]]:
     """
     Parse the flat body.content list from the Docs API and determine whether
     today's meeting section has non-empty topics.
@@ -168,9 +168,9 @@ def has_topics_for_today(content: list, today: datetime.date) -> bool:
         [Heading] "Feb 18, 2026 | Meeting title"
             ...
 
-    Returns True if today's date heading is found AND a 'Topics' sub-heading
-    exists beneath it with at least one non-empty content line.
-    Returns False otherwise.
+    Returns (True, topic_lines) if today's date heading is found AND a 'Topics'
+    sub-heading exists beneath it with at least one non-empty content line.
+    Returns (False, []) otherwise.
     """
     date_prefix = build_today_date_prefix(today)
 
@@ -181,6 +181,7 @@ def has_topics_for_today(content: list, today: datetime.date) -> bool:
 
     state = STATE_SEARCHING_DATE
     date_heading_level = None
+    topic_lines: list[str] = []
 
     elements_processed = 0
 
@@ -213,12 +214,12 @@ def has_topics_for_today(content: list, today: datetime.date) -> bool:
                 # A heading at strictly higher hierarchy means we've left the entire date section.
                 if level < date_heading_level:
                     logger.debug("Left today's section (higher hierarchy heading).")
-                    return False
+                    return False, []
                 # A heading at the same level as the date heading is only a section boundary
                 # if it looks like another date entry — not if it's e.g. "Attendees".
                 if level == date_heading_level and _DATE_PREFIX_RE.match(text):
                     logger.debug("Left today's section (next date heading).")
-                    return False
+                    return False, []
             # Match "Topics", "Topic", "Topics:", "Topic:" case-insensitively.
             if text.lower().rstrip(':') in ('topics', 'topic'):
                 state = STATE_CHECKING_CONTENT
@@ -228,21 +229,21 @@ def has_topics_for_today(content: list, today: datetime.date) -> bool:
             if is_heading:
                 # Strictly higher hierarchy — left the date section entirely.
                 if level < date_heading_level:
-                    logger.debug("Left today's section: no topic content found.")
-                    return False
+                    logger.debug("Left today's section after %d topic(s).", len(topic_lines))
+                    return bool(topic_lines), topic_lines
                 # Same level as date heading and looks like a new date — left the section.
                 if level == date_heading_level and _DATE_PREFIX_RE.match(text):
                     logger.debug("Left today's section (next date heading).")
-                    return False
+                    return bool(topic_lines), topic_lines
             # A known end-section name (Notes, Action items, etc.) ends the Topics section
             # regardless of whether it is a heading or normal/bold text.
             if text.lower() in _END_SECTION_NAMES:
                 logger.debug("Left 'Topics' sub-section (end section encountered).")
-                return False
-            # Any other non-empty text is a topic item.
+                return bool(topic_lines), topic_lines
+            # Any other non-empty text is a topic item — accumulate all lines.
             if text:
-                logger.debug("Found topic content.")
-                return True
+                logger.debug("Found topic content: %r", text[:40])
+                topic_lines.append(text)
 
     # Document exhausted — report why no topics were confirmed.
     if state == STATE_SEARCHING_DATE:
@@ -255,5 +256,8 @@ def has_topics_for_today(content: list, today: datetime.date) -> bool:
             "treating as no topics."
         )
     elif state == STATE_CHECKING_CONTENT:
+        if topic_lines:
+            logger.debug("Topics section with %d item(s) — end of document.", len(topic_lines))
+            return True, topic_lines
         logger.debug("Topics section found but contained no content items.")
-    return False
+    return False, []

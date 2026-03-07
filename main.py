@@ -158,7 +158,7 @@ def _send_day_before_reminders(
                 )
                 continue
 
-            should_cancel, reason = canceller.should_cancel_event(event, docs_svc, target_date)
+            should_cancel, reason, _ = canceller.should_cancel_event(event, docs_svc, target_date)
 
             if reason in ('no_doc', 'doc_error'):
                 logger.info(
@@ -311,7 +311,7 @@ def main() -> None:
                         # 2-hour warning zone: warn but do not cancel yet.
                         if webhooks:
                             try:
-                                should_cancel, _ = canceller.should_cancel_event(
+                                should_cancel, _, _ = canceller.should_cancel_event(
                                     event, docs_svc, today
                                 )
                                 if should_cancel:
@@ -338,9 +338,11 @@ def main() -> None:
 
                     # 1-hour cancellation zone: cancel if no topics, then notify.
                     peek_cancel = False
+                    peek_reason = ''
+                    peek_topics: list[str] = []
                     if webhooks:
                         try:
-                            peek_cancel, _ = canceller.should_cancel_event(
+                            peek_cancel, peek_reason, peek_topics = canceller.should_cancel_event(
                                 event, docs_svc, today
                             )
                         except Exception:
@@ -350,25 +352,47 @@ def main() -> None:
                         event, calendar_svc, docs_svc, today, dry_run=args.dry_run
                     )
 
-                    if peek_cancel and webhooks:
-                        try:
-                            cancelled_key = f"{today}|cancelled|{summary}"
-                            if cancelled_key not in sent_keys:
-                                webhook_url = chat_service.find_webhook(webhooks, summary)
-                                if webhook_url is not None:
-                                    text = chat_service.build_cancellation_notification_message(
-                                        summary, _doc_url(event)
-                                    )
-                                    chat_service.send_webhook_message(
-                                        webhook_url, text, dry_run=args.dry_run,
-                                    )
-                                    if not args.dry_run:
-                                        sent_keys.add(cancelled_key)
-                        except Exception:
-                            logger.warning(
-                                "Cancellation Chat notification failed for %s — continuing.",
-                                calendar_service.safe_summary(event), exc_info=True,
-                            )
+                    if webhooks:
+                        if peek_cancel:
+                            try:
+                                cancelled_key = f"{today}|cancelled|{summary}"
+                                if cancelled_key not in sent_keys:
+                                    webhook_url = chat_service.find_webhook(webhooks, summary)
+                                    if webhook_url is not None:
+                                        text = chat_service.build_cancellation_notification_message(
+                                            summary, _doc_url(event)
+                                        )
+                                        chat_service.send_webhook_message(
+                                            webhook_url, text, dry_run=args.dry_run,
+                                        )
+                                        if not args.dry_run:
+                                            sent_keys.add(cancelled_key)
+                            except Exception:
+                                logger.warning(
+                                    "Cancellation Chat notification failed for %s — continuing.",
+                                    calendar_service.safe_summary(event), exc_info=True,
+                                )
+                        elif peek_reason == 'has_topics':
+                            # Meeting has topics and will go ahead — send 1-hour notification.
+                            try:
+                                starting_key = f"{today}|starting1h|{summary}"
+                                if starting_key not in sent_keys:
+                                    webhook_url = chat_service.find_webhook(webhooks, summary)
+                                    if webhook_url is not None:
+                                        time_str = chat_service.format_event_time(event, tz_info)
+                                        text = chat_service.build_one_hour_topics_message(
+                                            summary, time_str, peek_topics, _doc_url(event)
+                                        )
+                                        chat_service.send_webhook_message(
+                                            webhook_url, text, dry_run=args.dry_run,
+                                        )
+                                        if not args.dry_run:
+                                            sent_keys.add(starting_key)
+                            except Exception:
+                                logger.warning(
+                                    "1-hour Chat notification failed for %s — continuing.",
+                                    calendar_service.safe_summary(event), exc_info=True,
+                                )
 
                 except Exception:
                     logger.exception(

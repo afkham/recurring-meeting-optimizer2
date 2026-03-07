@@ -257,9 +257,9 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 
 ### 4.11 Google Chat Reminders (via Incoming Webhooks)
 
-**FR-48** The system SHALL send three types of notifications to Google Chat spaces via **incoming webhooks**. The user configures webhooks in `chat_webhooks.json` (a JSON object mapping label strings to webhook URLs). No additional Google Cloud configuration or OAuth scopes are required.
+**FR-48** The system SHALL send four types of notifications to Google Chat spaces via **incoming webhooks**. The user configures webhooks in `chat_webhooks.json` (a JSON object mapping label strings to webhook URLs). No additional Google Cloud configuration or OAuth scopes are required.
 
-**FR-49** Each notification type is deduplicated per meeting per day using `sent_reminders.json`. Keys have the format `YYYY-MM-DD|type|meeting_summary`. Entries older than yesterday are pruned on load. In dry-run mode, keys are never recorded (so a subsequent live run still sends). The three key types are `day_before`, `warn2h`, and `cancelled`.
+**FR-49** Each notification type is deduplicated per meeting per day using `sent_reminders.json`. Keys have the format `YYYY-MM-DD|type|meeting_summary`. Entries older than yesterday are pruned on load. In dry-run mode, keys are never recorded (so a subsequent live run still sends). The four key types are `day_before`, `warn2h`, `cancelled`, and `starting1h`.
 
 **FR-50** The system SHALL match a meeting to a webhook using a **significant-word subset algorithm**: all significant words (non-stop-words, length > 1) in the config label must appear in the significant words of the meeting summary. If multiple labels match, the one with the most significant words wins; ties broken alphabetically by label for determinism.
 
@@ -276,6 +276,8 @@ When multiple docs are attached, the event is **kept** if **any** doc has topics
 **FR-54** **2-hour warning** — when a meeting enters the 2-hour warning window (1–2 hours before start) and has no topics: send ⚠️ "If topics not added within the next hour, the meeting will be automatically cancelled" + meeting doc link. The meeting is **not** cancelled at this point. Sent at most once per meeting per day (key type: `warn2h`).
 
 **FR-55** **Cancellation notification** — after the meeting is cancelled at the 1-hour mark: send ❌ "Meeting has been automatically cancelled because there were no agenda topics" + meeting doc link. Sent at most once per meeting per day (key type: `cancelled`).
+
+**FR-59** **1-hour topics notification** — when a meeting enters the 1-hour cancellation window and topics ARE present (meeting will go ahead): send 🔔 "Meeting starts in 1 hour" + the full list of agenda topics extracted from the doc + meeting doc link. Sent at most once per meeting per day (key type: `starting1h`). This notification is only sent when `reason == 'has_topics'`; meetings with no doc or doc errors do not trigger it.
 
 **FR-56** In dry-run mode, Chat messages SHALL be logged but NOT sent, and no keys SHALL be recorded in `sent_reminders.json`.
 

@@ -183,6 +183,17 @@ def build_cancellation_notification_message(
     return text
 
 
+def build_one_hour_topics_message(
+    meeting_name: str, time_str: str, topics: list[str], doc_url: str | None = None
+) -> str:
+    """Message sent 1 hour before the meeting when topics are present."""
+    bullet_list = '\n'.join(f'\u2022 {t}' for t in topics if t.strip())
+    text = f"\U0001f514 {meeting_name} starts in 1 hour (at {time_str}).\n\nAgenda topics:\n{bullet_list}"
+    if doc_url:
+        text += f"\n\nMeeting doc: {doc_url}"
+    return text
+
+
 def send_webhook_message(webhook_url: str, text: str, dry_run: bool = False) -> None:
     """POST *text* to a Google Chat incoming webhook URL.
 

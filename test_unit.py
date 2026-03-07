@@ -23,6 +23,7 @@ Test groups:
   UT-08..09         calendar_service.cancel_event_occurrence() — partial-failure & idempotency
   UT-10..11         docs_service.extract_doc_ids_from_event() — URL validation
   UT-12             auth.get_credentials() — corrupt token recovery
+  UT-30..33         1-hour topics notification — topic extraction and message building
 
 Usage:
   python test_unit.py
@@ -78,7 +79,8 @@ DATE_HEADING = 'Feb 26, 2026 | Team Sync'
 class TestHasTopicsForToday(unittest.TestCase):
 
     def _call(self, content):
-        return docs_service.has_topics_for_today(content, TODAY)
+        has_topics, topics = docs_service.has_topics_for_today(content, TODAY)
+        return has_topics, topics
 
     def test_ut01_whitespace_only_lines_not_counted_as_topics(self):
         """UT-01: Topics section with only blank lines → False."""
@@ -92,7 +94,8 @@ class TestHasTopicsForToday(unittest.TestCase):
             _para('Notes'),
             _para('Action items'),
         ]
-        self.assertFalse(self._call(content))
+        has_topics, _ = self._call(content)
+        self.assertFalse(has_topics)
 
     def test_ut02_topic_content_before_next_date_heading_is_counted(self):
         """UT-02: Topic items appearing before the next date heading are found → True."""
@@ -105,7 +108,8 @@ class TestHasTopicsForToday(unittest.TestCase):
             _para('Topic:'),
             _para('- Old topic'),
         ]
-        self.assertTrue(self._call(content))
+        has_topics, _ = self._call(content)
+        self.assertTrue(has_topics)
 
     def test_ut03_two_consecutive_date_headings_no_content_between(self):
         """UT-03: Today's heading immediately followed by a new date heading → False."""
@@ -116,7 +120,8 @@ class TestHasTopicsForToday(unittest.TestCase):
             _para('Topic:'),
             _para('- Old topic'),
         ]
-        self.assertFalse(self._call(content))
+        has_topics, _ = self._call(content)
+        self.assertFalse(has_topics)
 
     def test_ut04_topic_variants_all_recognised(self):
         """UT-04: 'Topic', 'Topic:', 'Topics', 'Topics:', 'TOPICS:' all match."""
@@ -130,7 +135,8 @@ class TestHasTopicsForToday(unittest.TestCase):
                     _para('- An agenda item'),
                     _para('Notes'),
                 ]
-                self.assertTrue(self._call(content), f"'{variant}' should be recognised as Topics header")
+                has_topics, _ = self._call(content)
+                self.assertTrue(has_topics, f"'{variant}' should be recognised as Topics header")
 
     def test_ut13_date_heading_found_no_topics_section_cancels(self):
         """UT-13: Today's date heading present but NO Topics section at all → False (cancel)."""
@@ -144,9 +150,9 @@ class TestHasTopicsForToday(unittest.TestCase):
             _para('Action items'),
         ]
         with self.assertLogs('docs_service', level='INFO') as log_ctx:
-            result = self._call(content)
+            has_topics, _ = self._call(content)
 
-        self.assertFalse(result, "Meeting should be cancelled when Topics section is absent")
+        self.assertFalse(has_topics, "Meeting should be cancelled when Topics section is absent")
         self.assertTrue(
             any('no Topics section' in msg for msg in log_ctx.output),
             "Expected an INFO log mentioning 'no Topics section'",
@@ -187,26 +193,28 @@ class TestShouldCancelEvent(unittest.TestCase):
         mock_docs.documents.return_value.get.return_value.execute.side_effect = _http_error(403)
 
         event = _make_event(['doc_abc123'])
-        should_cancel, reason = canceller.should_cancel_event(event, mock_docs, TODAY)
+        should_cancel, reason, topics = canceller.should_cancel_event(event, mock_docs, TODAY)
 
         self.assertFalse(should_cancel)
         self.assertEqual(reason, 'doc_error')
+        self.assertEqual(topics, [])
 
     def test_ut06_network_error_on_doc_fetch_returns_doc_error(self):
-        """UT-06: httplib2.HttpLib2Error (network drop) → (False, 'doc_error')."""
+        """UT-06: httplib2.HttpLib2Error (network drop) → (False, 'doc_error', [])."""
         mock_docs = MagicMock()
         mock_docs.documents.return_value.get.return_value.execute.side_effect = (
             httplib2.HttpLib2Error("connection reset")
         )
 
         event = _make_event(['doc_abc123'])
-        should_cancel, reason = canceller.should_cancel_event(event, mock_docs, TODAY)
+        should_cancel, reason, topics = canceller.should_cancel_event(event, mock_docs, TODAY)
 
         self.assertFalse(should_cancel)
         self.assertEqual(reason, 'doc_error')
+        self.assertEqual(topics, [])
 
     def test_ut07_one_bad_doc_one_good_doc_returns_has_topics(self):
-        """UT-07: First doc → 403; second doc → has topics → (False, 'has_topics')."""
+        """UT-07: First doc → 403; second doc → has topics → (False, 'has_topics', [...])."""
         good_content = [
             SECTION_BREAK,
             _heading(DATE_HEADING),
@@ -231,10 +239,11 @@ class TestShouldCancelEvent(unittest.TestCase):
         mock_docs.documents.return_value.get.return_value.execute.side_effect = execute_side_effect
 
         event = _make_event(['doc_bad', 'doc_good'])
-        should_cancel, reason = canceller.should_cancel_event(event, mock_docs, TODAY)
+        should_cancel, reason, topics = canceller.should_cancel_event(event, mock_docs, TODAY)
 
         self.assertFalse(should_cancel)
         self.assertEqual(reason, 'has_topics')
+        self.assertIsInstance(topics, list)
 
 
 # ---------------------------------------------------------------------------
@@ -503,6 +512,82 @@ class TestWarningWindow(unittest.TestCase):
         now = datetime.datetime(2026, 2, 26, 8, 0, 0, tzinfo=self._TZ)
         event = {'start': {'date': '2026-02-26'}}
         self.assertFalse(calendar_service.is_within_warning_window(event, now))
+
+
+# ---------------------------------------------------------------------------
+# UT-30 .. UT-33  1-hour topics notification
+# ---------------------------------------------------------------------------
+
+class TestOneHourTopicsNotification(unittest.TestCase):
+    """Tests for topic extraction and 1-hour message building."""
+
+    def test_ut30_has_topics_returns_all_topic_lines(self):
+        """UT-30: has_topics_for_today() returns every topic line, not just the first."""
+        content = [
+            SECTION_BREAK,
+            _heading(DATE_HEADING),
+            _para('Topic:'),
+            _para('- Review on-call rotation'),
+            _para('- Alerting threshold changes'),
+            _para('- Infrastructure migration'),
+            _para('Notes'),
+        ]
+        has_topics, topics = docs_service.has_topics_for_today(content, TODAY)
+        self.assertTrue(has_topics)
+        self.assertEqual(len(topics), 3)
+        self.assertIn('- Review on-call rotation', topics)
+        self.assertIn('- Alerting threshold changes', topics)
+        self.assertIn('- Infrastructure migration', topics)
+
+    def test_ut31_has_topics_returns_empty_list_when_no_topics(self):
+        """UT-31: has_topics_for_today() returns (False, []) when Topics section is empty."""
+        content = [
+            SECTION_BREAK,
+            _heading(DATE_HEADING),
+            _para('Topic:'),
+            _para(''),
+            _para('Notes'),
+        ]
+        has_topics, topics = docs_service.has_topics_for_today(content, TODAY)
+        self.assertFalse(has_topics)
+        self.assertEqual(topics, [])
+
+    def test_ut32_build_one_hour_topics_message_format(self):
+        """UT-32: build_one_hour_topics_message() includes bell, topics, and doc link."""
+        topics = ['- Review Q2 plan', '- Discuss alerts']
+        text = _cs.build_one_hour_topics_message(
+            'SRE Leadership Sync', '9:00 AM IST', topics,
+            doc_url='https://docs.google.com/document/d/abc123/edit',
+        )
+        self.assertIn('SRE Leadership Sync', text)
+        self.assertIn('1 hour', text)
+        self.assertIn('9:00 AM IST', text)
+        self.assertIn('• - Review Q2 plan', text)
+        self.assertIn('• - Discuss alerts', text)
+        self.assertIn('https://docs.google.com/document/d/abc123/edit', text)
+
+    def test_ut33_should_cancel_event_returns_topics_on_has_topics(self):
+        """UT-33: should_cancel_event() third element contains topic lines when has_topics."""
+        content = [
+            SECTION_BREAK,
+            _heading(DATE_HEADING),
+            _para('Topic:'),
+            _para('- Discuss migration plan'),
+            _para('- Review SLOs'),
+            _para('Notes'),
+        ]
+        mock_docs = MagicMock()
+        mock_docs.documents.return_value.get.return_value.execute.return_value = {
+            'body': {'content': content}
+        }
+
+        event = _make_event(['doc_xyz'])
+        should_cancel, reason, topics = canceller.should_cancel_event(event, mock_docs, TODAY)
+
+        self.assertFalse(should_cancel)
+        self.assertEqual(reason, 'has_topics')
+        self.assertIn('- Discuss migration plan', topics)
+        self.assertIn('- Review SLOs', topics)
 
 
 # ---------------------------------------------------------------------------

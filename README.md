@@ -60,7 +60,7 @@ Day before                                   Meeting day
    none by 1h before"               in 1 hour"          by email
 ```
 
-All three notifications are sent **at most once per meeting per day**, regardless of how many hourly runs occur within each window.
+All five notifications are sent **at most once per meeting per day**, regardless of how many hourly runs occur within each window.
 
 ---
 
@@ -194,7 +194,7 @@ The program compares each config label to each meeting summary using **significa
 
 ### What messages are sent
 
-There are four message types. Each is sent **at most once** per meeting per day.
+There are five message types. Each is sent **at most once** per meeting per day.
 
 #### Day-before — no topics yet (⚠️)
 
@@ -246,7 +246,22 @@ The meeting was cancelled because there were no agenda topics.
 Meeting doc: https://docs.google.com/document/d/.../edit
 ```
 
-> **Note:** If no doc is attached to the event, or the doc cannot be read, the day-before messages are suppressed (safe default — no false alarms). The 2-hour warning and cancellation notification only fire when the cancellation logic also fires.
+#### 1-hour topics notification (🔔)
+
+Sent when the meeting is within 1 hour of starting **and topics are present** (meeting will go ahead). Includes the full agenda topic list extracted from the doc:
+
+```
+🔔 SRE Leadership Sync starts in 1 hour (at 9:00 AM IST).
+
+Agenda topics:
+• Review on-call rotation for Q2
+• Discuss alerting threshold changes
+• Plan for upcoming infrastructure migration
+
+Meeting doc: https://docs.google.com/document/d/.../edit
+```
+
+> **Note:** If no doc is attached to the event, or the doc cannot be read, the day-before messages are suppressed (safe default — no false alarms). The 2-hour warning and cancellation notification only fire when the cancellation logic also fires. The 1-hour topics notification only fires when topics are confirmed present.
 
 | Trigger | Message | Topics required? | Cancels? |
 |---|---|---|---|
@@ -254,6 +269,7 @@ Meeting doc: https://docs.google.com/document/d/.../edit
 | Day-before run, topics present | ✅ confirmation + doc link | Yes | No |
 | 1–2 h before start, no topics | ⚠️ final warning + doc link | No | No |
 | Within 1 h, no topics | ❌ cancellation + doc link | No | **Yes** |
+| Within 1 h, topics present | 🔔 agenda + doc link | **Yes** | No |
 
 ### Disabling Chat reminders
 
