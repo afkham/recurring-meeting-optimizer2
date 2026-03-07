@@ -12,6 +12,8 @@
 - [ ] `SRS.md` — new/changed FRs, NFRs, constants, decision logic
 - [ ] `README.md` — how it works, sample output, scheduling, troubleshooting
 - [ ] `tasks/lessons.md` — add or reinforce any lesson from this session
+- [ ] All tests pass — run `python3 test_unit.py` (and `test_integration.py` when credentials available)
+- [ ] Commit and push — do not wait for the user to ask
 
 ---
 
